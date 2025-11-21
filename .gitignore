@@ -1,6 +1,7 @@
 build/
 .*/
 !.gitlab/
+!.github/
 
 # Ignore meson's subprojects folder
 /subprojects

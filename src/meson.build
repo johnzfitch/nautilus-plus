@@ -232,6 +232,8 @@ libnautilus_sources = [
   'nautilus-search-engine-recent.h',
   'nautilus-search-engine-simple.c',
   'nautilus-search-engine-simple.h',
+  'nautilus-search-engine-searchcache.c',
+  'nautilus-search-engine-searchcache.h',
   'nautilus-search-hit.c',
   'nautilus-search-hit.h',
   'nautilus-search-popover.c',
