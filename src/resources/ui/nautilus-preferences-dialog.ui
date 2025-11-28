@@ -74,6 +74,13 @@
               </object>
             </child>
             <child>
+              <object class="AdwSwitchRow" id="search_show_hidden_files_row">
+                <property name="title" translatable="yes">Show _Hidden Files in Search</property>
+                <property name="subtitle" translatable="yes">Include hidden files (starting with a dot) in search results</property>
+                <property name="use_underline">True</property>
+              </object>
+            </child>
+            <child>
               <object class="AdwComboRow" id="thumbnails_row">
                 <property name="title" translatable="yes">Show _Thumbnails</property>
                 <property name="use_underline">True</property>

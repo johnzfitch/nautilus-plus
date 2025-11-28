@@ -54,6 +54,8 @@
         "count_row"
 #define NAUTILUS_PREFERENCES_DIALOG_SEARCH_RESULTS_LIMIT_ROW        \
         "search_results_limit_row"
+#define NAUTILUS_PREFERENCES_DIALOG_SEARCH_SHOW_HIDDEN_FILES_ROW    \
+        "search_show_hidden_files_row"
 
 static const char * const speed_tradeoff_values[] =
 {
@@ -418,6 +420,10 @@ nautilus_preferences_dialog_setup (GtkBuilder *builder)
     bind_builder_spin_row (builder, nautilus_preferences,
                            NAUTILUS_PREFERENCES_DIALOG_SEARCH_RESULTS_LIMIT_ROW,
                            NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT);
+
+    bind_builder_bool (builder, nautilus_preferences,
+                       NAUTILUS_PREFERENCES_DIALOG_SEARCH_SHOW_HIDDEN_FILES_ROW,
+                       NAUTILUS_PREFERENCES_SEARCH_SHOW_HIDDEN_FILES);
 
     nautilus_preferences_dialog_setup_icon_caption_page (builder);
 }
