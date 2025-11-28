@@ -200,6 +200,11 @@
       <summary>Whether to have full text search enabled by default when opening a new window/tab</summary>
       <description>If set to true, Files will also match the file contents besides the name. This toggles the default active state, which can still be overridden in the search popover</description>
     </key>
+    <key type="u" name="search-results-limit">
+      <default>1000</default>
+      <summary>Maximum search results per provider</summary>
+      <description>Maximum number of search results returned from each search provider. Lower values improve performance and stability. Set to 0 for unlimited (not recommended for large indexed directories).</description>
+    </key>
     <key name="date-time-format" enum="org.gnome.nautilus.DateTimeFormat">
       <default>'simple'</default>
       <summary>How to display file timestamps in the views</summary>

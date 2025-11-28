@@ -16,3 +16,6 @@ build/
 # Ignore captures
 /*.syscap
 /heaptrack.nautilus.*
+
+# Claude Code local notes
+CLAUDE.md

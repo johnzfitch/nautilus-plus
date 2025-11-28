@@ -281,6 +281,14 @@ nautilus_grid_cell_dispose (GObject *object)
 {
     NautilusGridCell *self = (NautilusGridCell *) object;
 
+    /* Disconnect signal group BEFORE disposing template to prevent
+     * callbacks from firing on widgets being destroyed. This fixes
+     * use-after-free crashes during search result cleanup. */
+    if (self->item_signal_group != NULL)
+    {
+        g_signal_group_set_target (self->item_signal_group, NULL);
+    }
+
     /* Stop and clean up animation */
     if (self->animated_paintable != NULL)
     {

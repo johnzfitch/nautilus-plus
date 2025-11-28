@@ -126,6 +126,9 @@ typedef enum
 /* Full Text Search enabled */
 #define NAUTILUS_PREFERENCES_FTS_ENABLED "fts-enabled"
 
+/* Search results limit per provider */
+#define NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT "search-results-limit"
+
 /* Gtk settings migration happened */
 #define NAUTILUS_PREFERENCES_MIGRATED_GTK_SETTINGS "migrated-gtk-settings"
 

@@ -221,7 +221,8 @@ update_labels (NautilusNameCell *self)
         gtk_label_set_markup (self->snippet, fts_snippet);
     }
 
-    gtk_widget_set_visible (self->path, (path_text != NULL));
+    /* Hide path when location_shadow is shown - they serve the same purpose */
+    gtk_widget_set_visible (self->path, (path_text != NULL && !self->show_location_shadow));
     gtk_widget_set_visible (self->snippet_button, (fts_snippet != NULL));
 }
 
@@ -502,6 +503,17 @@ static void
 nautilus_name_cell_dispose (GObject *object)
 {
     NautilusNameCell *self = (NautilusNameCell *) object;
+
+    /* Disconnect signal group BEFORE disposing template to prevent
+     * callbacks from firing on widgets being destroyed. This fixes
+     * use-after-free crashes during search result cleanup. */
+    if (self->item_signal_group != NULL)
+    {
+        g_signal_group_set_target (self->item_signal_group, NULL);
+    }
+
+    /* Clear loading timeout to prevent callbacks after dispose */
+    g_clear_handle_id (&self->loading_timeout_id, g_source_remove);
 
     gtk_widget_dispose_template (GTK_WIDGET (self), NAUTILUS_TYPE_NAME_CELL);
 
