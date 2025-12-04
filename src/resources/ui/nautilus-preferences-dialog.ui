@@ -45,6 +45,13 @@
                 <property name="use_underline">True</property>
               </object>
             </child>
+            <child>
+              <object class="AdwSwitchRow" id="show_hidden_files_row">
+                <property name="title" translatable="yes">Show _Hidden Files</property>
+                <property name="subtitle" translatable="yes">Show files starting with a dot (Ctrl+H)</property>
+                <property name="use_underline">True</property>
+              </object>
+            </child>
           </object>
         </child>
         <child>

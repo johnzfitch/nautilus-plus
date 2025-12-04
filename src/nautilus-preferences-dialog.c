@@ -38,6 +38,8 @@
         "sort_folders_first_row"
 #define NAUTILUS_PREFERENCES_DIALOG_DELETE_PERMANENTLY_WIDGET                  \
         "show_delete_permanently_row"
+#define NAUTILUS_PREFERENCES_DIALOG_SHOW_HIDDEN_FILES_WIDGET                   \
+        "show_hidden_files_row"
 #define NAUTILUS_PREFERENCES_DIALOG_CREATE_LINK_WIDGET                         \
         "show_create_link_row"
 #define NAUTILUS_PREFERENCES_DIALOG_LIST_VIEW_USE_TREE_WIDGET                  \
@@ -630,6 +632,9 @@ nautilus_preferences_dialog_setup (GtkBuilder *builder)
     bind_builder_bool (builder, nautilus_preferences,
                        NAUTILUS_PREFERENCES_DIALOG_DELETE_PERMANENTLY_WIDGET,
                        NAUTILUS_PREFERENCES_SHOW_DELETE_PERMANENTLY);
+    bind_builder_bool (builder, gtk_filechooser_preferences,
+                       NAUTILUS_PREFERENCES_DIALOG_SHOW_HIDDEN_FILES_WIDGET,
+                       NAUTILUS_PREFERENCES_SHOW_HIDDEN_FILES);
 
     setup_detailed_date (builder);
 
