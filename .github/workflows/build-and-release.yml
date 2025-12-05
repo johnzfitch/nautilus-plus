@@ -49,6 +49,15 @@ jobs:
             desktop-file-utils \
             appstream-glib \
             python-packaging gobject-introspection
+          # Fix gdbus-codegen path issue
+          ln -sf /usr/sbin/gdbus-codegen /usr/bin/gdbus-codegen 2>/dev/null || true
+
+      - name: Debug gdbus-codegen
+        run: |
+          echo "PATH: $PATH"
+          which gdbus-codegen || echo "not in PATH"
+          ls -la /usr/bin/gdbus* /usr/sbin/gdbus* 2>/dev/null || echo "checking files..."
+          pacman -Ql glib2 | grep -E "(gdbus|codegen)" | head -5
 
       - name: Checkout repository
         uses: actions/checkout@v4
