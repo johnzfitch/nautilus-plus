@@ -47,7 +47,8 @@ jobs:
             cairo pango gdk-pixbuf2 \
             dconf libcloudproviders \
             desktop-file-utils \
-            appstream-glib
+            appstream-glib \
+            python-packaging gobject-introspection
 
       - name: Checkout repository
         uses: actions/checkout@v4
