@@ -21,36 +21,17 @@ build/
 CLAUDE.md
 
 # Personal/Marketing Files (do not commit)
-# Personal/Marketing Files (do not commit)
 /tmp/nautilus-plus-reddit-post.md
 /tmp/nautilus-search-blacklist-guide.md
 /tmp/nautilus-plus-changes-summary.md
 /tmp/nautilus-plus-installation-guide.md
 /tmp/progressive-search-design.md
 /tmp/test-search.sh
-
-# Personal documentation staging
-IMPLEMENTATION-STATUS.md
-INFO-PANEL-APPROACHES.md
-RUST-IMPLEMENTATION-SUMMARY.md
-RUST-INFO-PANEL-GUIDE.md
-
-# Build artifacts
-nautilus-info-panel-rs/
-pyghidra_mcp_projects/
-
-# Backup files
-*.backup-searchcache
-
-# Test reports
-test-reports/
-# Personal/Marketing Files (do not commit)
-/tmp/nautilus-plus-reddit-post.md
-/tmp/nautilus-search-blacklist-guide.md
-/tmp/nautilus-plus-changes-summary.md
-/tmp/nautilus-plus-installation-guide.md
-/tmp/progressive-search-design.md
-/tmp/test-search.sh
+/tmp/INSTALLATION.md
+/tmp/.gitignore-additions
+/tmp/setup-nautilus-docs-fixed.sh
+/tmp/rename-repo-on-github.sh
+/tmp/profile-readme-nautilus-section.md
 
 # Personal documentation staging
 IMPLEMENTATION-STATUS.md
