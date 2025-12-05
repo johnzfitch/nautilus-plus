@@ -74,7 +74,7 @@ jobs:
           meson setup build \
             --prefix=/usr \
             --buildtype=release \
-            -Dtests=false \
+            -Dtests=none \
             -Ddocs=false
 
       - name: Build
@@ -171,7 +171,7 @@ jobs:
             meson setup build \
               --prefix=/usr \
               --buildtype=release \
-              -Dtests=false \
+              -Dtests=none \
               -Ddocs=false
             ninja -C build
           }

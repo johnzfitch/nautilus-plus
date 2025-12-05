@@ -163,7 +163,7 @@ jobs:
 
           build() {
               cd "\$srcdir/nautilus-fork"
-              arch-meson build -D docs=false -D tests=none -D packagekit=false
+              arch-meson build -D docs=false -D tests=none -D packagekit=false -D extensions=false
               meson compile -C build
           }
 
