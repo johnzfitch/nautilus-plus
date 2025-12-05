@@ -1,35 +1,141 @@
-name: Publish to AUR
+name: Release and Publish to AUR
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+    paths-ignore:
+      - '*.md'
+      - '.github/workflows/*.yml'
+      - 'docs/**'
   workflow_dispatch:
     inputs:
       version:
         description: 'Version to publish (e.g., 50.1)'
         required: true
+      skip_release:
+        description: 'Skip creating GitHub release'
+        type: boolean
+        default: false
 
 jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Check if release needed
+        id: check
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          else
+            LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            COMMITS_SINCE=$(git rev-list "${LAST_TAG}..HEAD" --count 2>/dev/null || echo "1")
+            if [ "$COMMITS_SINCE" -gt 0 ]; then
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Calculate version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v50.0")
+            LAST_VER="${LAST_TAG#v}"
+            MAJOR="${LAST_VER%%.*}"
+            MINOR="${LAST_VER#*.}"
+            MINOR="${MINOR%%.*}"
+            NEW_MINOR=$((MINOR + 1))
+            echo "version=${MAJOR}.${NEW_MINOR}" >> "$GITHUB_OUTPUT"
+          fi
+
+  create-release:
+    needs: check-changes
+    if: needs.check-changes.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ needs.check-changes.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Create and push tag
+        if: github.event.inputs.skip_release != 'true'
+        env:
+          VERSION: ${{ needs.check-changes.outputs.version }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -a "v${VERSION}" -m "Release v${VERSION}"
+          git push origin "v${VERSION}"
+
+      - name: Generate changelog
+        id: changelog
+        env:
+          VERSION: ${{ needs.check-changes.outputs.version }}
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$LAST_TAG" ]; then
+            CHANGES=$(git log "${LAST_TAG}..HEAD" --pretty=format:"- %s" --no-merges | head -20)
+          else
+            CHANGES=$(git log --pretty=format:"- %s" --no-merges -20)
+          fi
+          echo "changes<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        if: github.event.inputs.skip_release != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          VERSION: ${{ needs.check-changes.outputs.version }}
+          CHANGES: ${{ steps.changelog.outputs.changes }}
+        run: |
+          gh release create "v${VERSION}" \
+            --title "nautilus-plus v${VERSION}" \
+            --notes "## Changes
+
+          ${CHANGES}
+
+          ## Install
+
+          \`\`\`bash
+          yay -S nautilus-plus search-cache
+          \`\`\`"
+
   aur-publish:
+    needs: [check-changes, create-release]
+    if: needs.check-changes.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure git safe directory
+      - name: Configure git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Get version
-        id: version
-        env:
-          INPUT_VERSION: ${{ github.event.inputs.version }}
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          if [ -n "$INPUT_VERSION" ]; then
-            echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Publish nautilus-plus to AUR
         uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
@@ -38,7 +144,7 @@ jobs:
           pkgbuild: |
             # Maintainer: Zack <zack@internetuniverse.org>
             pkgname=nautilus-plus
-            pkgver=${{ steps.version.outputs.version }}
+            pkgver=${{ needs.check-changes.outputs.version }}
             pkgrel=1
             pkgdesc="Enhanced GNOME file manager with fast search, animated thumbnails, and more"
             arch=('x86_64')
@@ -67,6 +173,6 @@ jobs:
           commit_username: 'GitHub Actions'
           commit_email: 'actions@github.com'
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update to ${{ steps.version.outputs.version }}"
+          commit_message: "Update to ${{ needs.check-changes.outputs.version }}"
           assets: |
             nautilus-plus.install

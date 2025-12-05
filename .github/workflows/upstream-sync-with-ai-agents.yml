@@ -164,10 +164,13 @@ jobs:
             printf 'Merging upstream GNOME Nautilus changes.\n\n'
             printf '%s\n' "- Upstream: ${UPSTREAM_COMMIT:0:8}"
             printf '%s\n\n' "- Current: ${CURRENT_COMMIT:0:8}"
-            printf '### AI Tasks\n\n'
-            printf '1. Review spec: %s\n' "$SPEC_FILE"
-            printf '2. Run Claude: claude --prompt "$(cat .claude-task.md)"\n'
-            printf '3. Test and merge\n'
+            printf '### Spec\n\n'
+            printf 'See: %s\n\n' "$SPEC_FILE"
+            printf '### Custom Features to Preserve\n\n'
+            printf '%s\n' '- Animated WebP/GIF/APNG thumbnails'
+            printf '%s\n' '- Search-cache integration'
+            printf '%s\n\n' '- FUSE mount detection'
+            printf '@copilot please merge upstream/main, resolve any conflicts while preserving our custom features listed above, then mark this PR ready for review.\n'
           } > .pr-body.md
 
           gh pr create \
@@ -176,6 +179,14 @@ jobs:
             --title "Upstream Sync: GNOME Nautilus ${UPSTREAM_COMMIT:0:8}" \
             --body-file .pr-body.md \
             --draft
+
+      - name: Request Copilot assistance
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          PR_BRANCH: ${{ steps.create_branch.outputs.pr_branch }}
+        run: |
+          PR_NUM=$(gh pr view "$PR_BRANCH" --json number -q .number)
+          gh pr comment "$PR_NUM" --body "@copilot merge upstream/main into this branch, resolve conflicts preserving our custom features (animated thumbnails, search-cache, FUSE detection), then mark ready for review."
 
   notify:
     name: Notify

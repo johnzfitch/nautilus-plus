@@ -59,6 +59,8 @@ jobs:
         env:
           GH_REF: ${{ github.ref }}
         run: |
+          # Fix git safe.directory for container environments
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           if [[ "$GH_REF" == refs/tags/* ]]; then
             VERSION="${GH_REF#refs/tags/v}"
           else
