@@ -120,7 +120,7 @@ jobs:
           pacman -S --noconfirm --needed \
             base-devel git sudo fakeroot \
             meson ninja gcc clang \
-            gtk4 libadwaita glib2 \
+            gtk4 libadwaita glib2 glib2-devel \
             localsearch tinysparql \
             gnome-desktop-4 \
             libgexiv2 libportal libportal-gtk4 \
@@ -129,7 +129,8 @@ jobs:
             cairo pango gdk-pixbuf2 \
             dconf libcloudproviders \
             desktop-file-utils \
-            appstream-glib
+            appstream-glib \
+            python-packaging gobject-introspection
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
@@ -183,8 +184,9 @@ jobs:
           }
           PKGBUILD_EOF
 
-          sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" PKGBUILD
-          sed -i "s/-/./g" PKGBUILD
+          # Replace version placeholder - use dots in pkgver (Arch convention)
+          PKGVER=$(echo "$VERSION" | sed 's/-/./g')
+          sed -i "s/VERSION_PLACEHOLDER/$PKGVER/g" PKGBUILD
           chown -R builder:builder .
 
       - name: Build package with makepkg
