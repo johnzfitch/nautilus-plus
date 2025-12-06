@@ -366,3 +366,19 @@ rubberband {
   font-size: 0.85em;
   margin-top: -2px;
 }
+
+/* Search-cache status pill indicator */
+label.pill {
+  border-radius: 12px;
+  padding: 4px 10px;
+}
+
+label.pill.success {
+  background-color: alpha(@success_color, 0.15);
+  color: @success_color;
+}
+
+label.pill.error {
+  background-color: alpha(@error_color, 0.15);
+  color: @error_color;
+}
