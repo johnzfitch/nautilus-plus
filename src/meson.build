@@ -22,7 +22,6 @@ libnautilus_sources = [
     sources: [
       'nautilus-enums.h',
       'nautilus-search-popover.h',
-      'nautilus-search-provider.h'
     ]
   ),
   resources,
@@ -146,6 +145,8 @@ libnautilus_sources = [
   'nautilus-icon-info.c',
   'nautilus-icon-info.h',
   'nautilus-icon-names.h',
+  'nautilus-image.c',
+  'nautilus-image.h',
   'nautilus-internal-place-file.c',
   'nautilus-internal-place-file.h',
   'nautilus-keyfile-metadata.c',
@@ -232,8 +233,6 @@ libnautilus_sources = [
   'nautilus-search-engine-recent.h',
   'nautilus-search-engine-simple.c',
   'nautilus-search-engine-simple.h',
-  'nautilus-search-engine-searchcache.c',
-  'nautilus-search-engine-searchcache.h',
   'nautilus-search-hit.c',
   'nautilus-search-hit.h',
   'nautilus-search-popover.c',
@@ -257,10 +256,6 @@ libnautilus_sources = [
   'nautilus-tag-manager.h',
   'nautilus-thumbnails.c',
   'nautilus-thumbnails.h',
-  'nautilus-animated-thumbnail.c',
-  'nautilus-animated-thumbnail.h',
-  'nautilus-animated-paintable.c',
-  'nautilus-animated-paintable.h',
   'nautilus-toolbar.c',
   'nautilus-toolbar.h',
   'nautilus-toolbar-menu-sections.h',
@@ -308,7 +303,7 @@ nautilus_deps = [
   libportal_gtk4,
   nautilus_extension,
   selinux,
-  tracker_sparql,
+  tinysparql,
   xdp_gnome,
 ]
 
