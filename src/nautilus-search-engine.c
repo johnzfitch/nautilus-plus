@@ -28,6 +28,7 @@
 #include "nautilus-search-engine-model.h"
 #include "nautilus-search-engine-localsearch.h"
 #include "nautilus-search-engine-recent.h"
+#include "nautilus-search-engine-searchcache.h"
 #include "nautilus-search-engine-simple.h"
 #include "nautilus-search-hit.h"
 #include "nautilus-search-provider.h"
@@ -43,6 +44,7 @@ struct _NautilusSearchEngine
     NautilusSearchProvider *localsearch;
     NautilusSearchProvider *model;
     NautilusSearchProvider *recent;
+    NautilusSearchProvider *searchcache;
     NautilusSearchProvider *simple;
 
     GHashTable *uris;
@@ -287,6 +289,8 @@ nautilus_search_engine_set_search_type (NautilusSearchEngine *self,
                     (CreateFunc) nautilus_search_engine_model_new);
     setup_provider (self, &self->recent, NAUTILUS_SEARCH_TYPE_RECENT,
                     (CreateFunc) nautilus_search_engine_recent_new);
+    setup_provider (self, &self->searchcache, NAUTILUS_SEARCH_TYPE_SEARCHCACHE,
+                    (CreateFunc) nautilus_search_engine_searchcache_new);
     setup_provider (self, &self->simple, NAUTILUS_SEARCH_TYPE_SIMPLE,
                     (CreateFunc) nautilus_search_engine_simple_new);
 }
@@ -301,6 +305,7 @@ nautilus_search_engine_finalize (GObject *object)
     g_clear_object (&self->localsearch);
     g_clear_object (&self->recent);
     g_clear_object (&self->model);
+    g_clear_object (&self->searchcache);
     g_clear_object (&self->simple);
     g_clear_object (&self->query);
 
