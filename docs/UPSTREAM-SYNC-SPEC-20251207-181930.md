@@ -1,8 +1,8 @@
 # Upstream Sync Specification
 
-Generated: 2025-12-08 18:22:35 UTC
+Generated: 2025-12-07 18:19:30 UTC
 Upstream Commit: f5fea596a024e6475198123c5395b20167d945de
-Current Commit: b1e935547f151da8fe6e8e1fb98ea8317a8b2f2b
+Current Commit: 64f8197a2065ebf0d90f6552d54cf523961a6694
 
 ## Upstream Changes
 
