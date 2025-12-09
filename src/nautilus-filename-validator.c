@@ -115,7 +115,7 @@ nautilus_filename_validator_get_new_name (NautilusFilenameValidator *self)
 {
     char *trimmed_name = g_strdup (self->new_name);
     g_strstrip (trimmed_name);
-    return g_strdup (trimmed_name);
+    return trimmed_name;
 }
 
 static gboolean
