@@ -29,6 +29,7 @@
 #include "nautilus-search-engine-localsearch.h"
 #include "nautilus-search-engine-recent.h"
 #include "nautilus-search-engine-simple.h"
+#include "nautilus-search-engine-searchcache.h"
 #include "nautilus-search-hit.h"
 #include "nautilus-search-provider.h"
 
@@ -44,6 +45,7 @@ struct _NautilusSearchEngine
     NautilusSearchProvider *model;
     NautilusSearchProvider *recent;
     NautilusSearchProvider *simple;
+    NautilusSearchProvider *searchcache;
 
     GHashTable *uris;
     guint providers_started;
@@ -100,6 +102,7 @@ search_engine_start_real (NautilusSearchEngine *self)
     self->providers_finished = 0;
 
     self->starting = TRUE;
+    search_engine_start_provider (self->searchcache, self);
     search_engine_start_provider (self->localsearch, self);
     search_engine_start_provider (self->model, self);
     search_engine_start_provider (self->recent, self);
@@ -141,6 +144,10 @@ nautilus_search_engine_stop (NautilusSearchEngine *self)
 {
     g_debug ("Search engine stop");
 
+    if (self->searchcache != NULL)
+    {
+        nautilus_search_provider_stop (self->searchcache);
+    }
     if (self->localsearch != NULL)
     {
         nautilus_search_provider_stop (self->localsearch);
@@ -281,6 +288,8 @@ nautilus_search_engine_set_search_type (NautilusSearchEngine *self,
 
     self->search_type = search_type;
 
+    setup_provider (self, &self->searchcache, NAUTILUS_SEARCH_TYPE_SEARCHCACHE,
+                    (CreateFunc) nautilus_search_engine_searchcache_new);
     setup_provider (self, &self->localsearch, NAUTILUS_SEARCH_TYPE_LOCALSEARCH,
                     (CreateFunc) nautilus_search_engine_localsearch_new);
     setup_provider (self, &self->model, NAUTILUS_SEARCH_TYPE_MODEL,
@@ -298,6 +307,7 @@ nautilus_search_engine_finalize (GObject *object)
 
     g_hash_table_destroy (self->uris);
 
+    g_clear_object (&self->searchcache);
     g_clear_object (&self->localsearch);
     g_clear_object (&self->recent);
     g_clear_object (&self->model);
