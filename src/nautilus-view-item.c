@@ -219,23 +219,23 @@ free_weak_ref (gpointer data)
     g_free (weak_ref);
 }
 
+static GPtrArray *files_to_prioritize = NULL;
+
 static GPtrArray *
 get_priority_array (void)
 {
-    static GPtrArray *priority_files = NULL;
-
-    if (G_UNLIKELY (priority_files == NULL))
+    if (files_to_prioritize == NULL)
     {
-        priority_files = g_ptr_array_new_with_free_func (free_weak_ref);
+        files_to_prioritize = g_ptr_array_new_with_free_func (free_weak_ref);
     }
 
-    return priority_files;
+    return files_to_prioritize;
 }
 
 static void
 prioritize_idle_callback (gpointer data)
 {
-    GPtrArray *priority_files = get_priority_array ();
+    g_autoptr (GPtrArray) priority_files = g_steal_pointer (&files_to_prioritize);
 
     priorization_timeout = 0;
 
@@ -248,7 +248,6 @@ prioritize_idle_callback (gpointer data)
             NautilusFile *file = nautilus_view_item_get_file (item);
 
             nautilus_file_prioritize (file);
-            g_ptr_array_remove_index_fast (priority_files, i);
         }
     }
 }
@@ -337,14 +336,6 @@ void
 nautilus_view_item_file_changed (NautilusViewItem *self)
 {
     g_return_if_fail (NAUTILUS_IS_VIEW_ITEM (self));
-
-    /* Safety check: Only emit if the cell UI is still valid.
-     * The cell may have been disposed during async operations
-     * (e.g., thumbnail completion after view destruction). */
-    if (self->item_ui == NULL || !GTK_IS_WIDGET (self->item_ui))
-    {
-        return;
-    }
 
     g_signal_emit (self, signals[FILE_CHANGED], 0);
 }
