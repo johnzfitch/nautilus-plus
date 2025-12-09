@@ -47,6 +47,8 @@
     <value value="2" nick="medium"/>
     <value value="3" nick="large"/>
     <value value="4" nick="extra-large"/>
+    <value value="5" nick="huge"/>
+    <value value="6" nick="gigantic"/>
   </enum>
 
   <enum id="org.gnome.nautilus.ListZoomLevel">
