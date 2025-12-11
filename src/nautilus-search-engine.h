@@ -32,10 +32,12 @@ typedef enum {
     NAUTILUS_SEARCH_TYPE_MODEL       = 1 << 1,
     NAUTILUS_SEARCH_TYPE_RECENT      = 1 << 2,
     NAUTILUS_SEARCH_TYPE_SIMPLE      = 1 << 3,
+    NAUTILUS_SEARCH_TYPE_SEARCHCACHE = 1 << 4,
 
     NAUTILUS_SEARCH_TYPE_FOLDER = NAUTILUS_SEARCH_TYPE_LOCALSEARCH |
                                   NAUTILUS_SEARCH_TYPE_MODEL |
-                                  NAUTILUS_SEARCH_TYPE_SIMPLE,
+                                  NAUTILUS_SEARCH_TYPE_SIMPLE |
+                                  NAUTILUS_SEARCH_TYPE_SEARCHCACHE,
     /* This is used for both "Search Everywhere" and shell search provider. */
     NAUTILUS_SEARCH_TYPE_GLOBAL = NAUTILUS_SEARCH_TYPE_LOCALSEARCH |
                                   NAUTILUS_SEARCH_TYPE_RECENT,
