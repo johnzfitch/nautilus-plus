@@ -34,12 +34,14 @@ typedef enum {
     NAUTILUS_SEARCH_TYPE_SIMPLE      = 1 << 3,
     NAUTILUS_SEARCH_TYPE_SEARCHCACHE = 1 << 4,
 
-    NAUTILUS_SEARCH_TYPE_FOLDER = NAUTILUS_SEARCH_TYPE_SEARCHCACHE |
+    NAUTILUS_SEARCH_TYPE_FOLDER = NAUTILUS_SEARCH_TYPE_LOCALSEARCH |
                                   NAUTILUS_SEARCH_TYPE_MODEL |
-                                  NAUTILUS_SEARCH_TYPE_SIMPLE,
+                                  NAUTILUS_SEARCH_TYPE_SIMPLE |
+                                  NAUTILUS_SEARCH_TYPE_SEARCHCACHE,
     /* This is used for both "Search Everywhere" and shell search provider. */
-    NAUTILUS_SEARCH_TYPE_GLOBAL = NAUTILUS_SEARCH_TYPE_SEARCHCACHE |
-                                  NAUTILUS_SEARCH_TYPE_RECENT,
+    NAUTILUS_SEARCH_TYPE_GLOBAL = NAUTILUS_SEARCH_TYPE_LOCALSEARCH |
+                                  NAUTILUS_SEARCH_TYPE_RECENT |
+                                  NAUTILUS_SEARCH_TYPE_SEARCHCACHE,
 
     NAUTILUS_SEARCH_TYPE_ALL    = NAUTILUS_SEARCH_TYPE_FOLDER | NAUTILUS_SEARCH_TYPE_GLOBAL,
 } NautilusSearchType;
@@ -54,5 +56,11 @@ nautilus_search_engine_new (NautilusSearchType search_type);
 void
 nautilus_search_engine_set_search_type (NautilusSearchEngine *self,
                                         NautilusSearchType search_type);
+
+void
+nautilus_search_engine_start (NautilusSearchEngine *self,
+                              NautilusQuery        *query);
+void
+nautilus_search_engine_stop (NautilusSearchEngine *self);
 
 G_END_DECLS
