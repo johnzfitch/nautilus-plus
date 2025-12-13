@@ -19,7 +19,7 @@ on:
         type: boolean
 
 env:
-  PKG_NAME: nautilus-omarchy
+  PKG_NAME: nautilus-plus
 
 jobs:
   build:
@@ -144,14 +144,14 @@ jobs:
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           cat > PKGBUILD << 'PKGBUILD_EOF'
-          # Maintainer: Omarchy <packages@omarchy.org>
-          pkgname=nautilus-omarchy
+          # Maintainer: Zack <zack@internetuniverse.org>
+          pkgname=nautilus-plus
           pkgver=VERSION_PLACEHOLDER
           pkgrel=1
-          pkgdesc="GNOME file manager with Omarchy customizations"
+          pkgdesc="Enhanced GNOME file manager with fast search, animated thumbnails, and more"
           arch=('x86_64')
-          url="https://github.com/johnzfitch/nautilus-fork"
-          license=('GPL3')
+          url="https://github.com/johnzfitch/nautilus-plus"
+          license=('GPL-3.0-or-later')
           depends=(
             'gtk4' 'libadwaita' 'glib2'
             'localsearch' 'tinysparql'
@@ -163,8 +163,9 @@ jobs:
             'dconf' 'libcloudproviders'
           )
           makedepends=('meson' 'ninja' 'git')
-          provides=('nautilus')
-          conflicts=('nautilus')
+          optdepends=('search-cache: Fast trigram-indexed file search (highly recommended)')
+          provides=('nautilus' 'libnautilus-extension')
+          conflicts=('nautilus' 'libnautilus-extension')
           source=()
           sha256sums=()
 
@@ -228,7 +229,7 @@ jobs:
           IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', needs.build.outputs.version) }}
-          name: "Nautilus Omarchy ${{ needs.build.outputs.version }}"
+          name: "Nautilus Plus ${{ needs.build.outputs.version }}"
           draft: ${{ !startsWith(github.ref, 'refs/tags/') }}
           prerelease: ${{ contains(needs.build.outputs.version, 'alpha') }}
           generate_release_notes: true

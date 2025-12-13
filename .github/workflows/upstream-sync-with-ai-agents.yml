@@ -137,6 +137,7 @@ jobs:
             printf '## Custom Features to Preserve\n\n'
             printf '%s\n' '- Animated WebP/GIF/APNG thumbnails'
             printf '%s\n' '- Search-cache integration'
+            printf '%s\n' '- Search debounce and preview results'
             printf '%s\n' '- FUSE mount detection'
           } > .claude-task.md
 
