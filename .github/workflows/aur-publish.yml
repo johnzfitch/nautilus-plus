@@ -101,31 +101,65 @@ jobs:
           LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -n "$LAST_TAG" ]; then
             CHANGES=$(git log "${LAST_TAG}..HEAD" --pretty=format:"- %s" --no-merges | head -20)
+            PREV_VER="${LAST_TAG#v}"
           else
             CHANGES=$(git log --pretty=format:"- %s" --no-merges -20)
+            PREV_VER="50.0"
           fi
           echo "changes<<EOF" >> "$GITHUB_OUTPUT"
           echo "$CHANGES" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "prev_ver=$PREV_VER" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         if: github.event.inputs.skip_release != 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           VERSION: ${{ needs.check-changes.outputs.version }}
+          PREV_VER: ${{ steps.changelog.outputs.prev_ver }}
           CHANGES: ${{ steps.changelog.outputs.changes }}
         run: |
           gh release create "v${VERSION}" \
-            --title "nautilus-plus v${VERSION}" \
-            --notes "## Changes
+            --title "Nautilus Plus v${VERSION}" \
+            --notes "## What's Changed
 
           ${CHANGES}
 
-          ## Install
+          ## Features
 
+          - **Fast Search** - Sub-millisecond search via search-cache integration
+          - **Search Debounce** - 200ms delay with instant preview results (50 results)
+          - **Animated Thumbnails** - WebP/GIF/APNG support with native playback
+          - **Larger Thumbnails** - HUGE (384px) and GIGANTIC (512px) zoom levels
+          - **Path Filtering** - Directory-scoped search for faster results
+          - **FUSE Mount Detection** - 1-second timeout prevents UI hangs
+
+          ## Installation
+
+          ### Arch Linux (AUR)
           \`\`\`bash
           yay -S nautilus-plus search-cache
-          \`\`\`"
+          systemctl --user enable --now search-cache
+          \`\`\`
+
+          ### From Source
+          \`\`\`bash
+          git clone https://github.com/johnzfitch/nautilus-plus
+          cd nautilus-plus
+          meson setup build
+          ninja -C build
+          sudo ninja -C build install
+          \`\`\`
+
+          ## Requirements
+
+          **Highly Recommended:** [search-cache](https://aur.archlinux.org/packages/search-cache) for fast search.
+
+          Without search-cache, search will be very slow and CPU-intensive.
+
+          ---
+
+          **Full changelog:** https://github.com/johnzfitch/nautilus-plus/compare/v${PREV_VER}...v${VERSION}"
 
   aur-publish:
     needs: [check-changes, create-release]
@@ -175,6 +209,29 @@ jobs:
           sed -i 's/^          //' PKGBUILD
           sed -i "s/VERSION_PLACEHOLDER/${VERSION}/" PKGBUILD
 
+      - name: Generate AUR commit message
+        id: aur_message
+        env:
+          VERSION: ${{ needs.check-changes.outputs.version }}
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$LAST_TAG" ]; then
+            SUMMARY=$(git log "${LAST_TAG}..HEAD" --pretty=format:"- %s" --no-merges | head -5)
+          else
+            SUMMARY=$(git log --pretty=format:"- %s" --no-merges -5)
+          fi
+
+          MESSAGE="Update to v${VERSION}
+
+Changes:
+${SUMMARY}
+
+Enhanced GNOME file manager with fast search, animated thumbnails, and FUSE mount detection."
+
+          echo "message<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$MESSAGE" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
       - name: Publish nautilus-plus to AUR
         uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
         with:
@@ -183,6 +240,6 @@ jobs:
           commit_username: 'GitHub Actions'
           commit_email: 'actions@github.com'
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update to ${{ needs.check-changes.outputs.version }}"
+          commit_message: ${{ steps.aur_message.outputs.message }}
           assets: |
             nautilus-plus.install
