@@ -221,16 +221,16 @@ jobs:
             SUMMARY=$(git log --pretty=format:"- %s" --no-merges -5)
           fi
 
-          MESSAGE="Update to v${VERSION}
-
-Changes:
-${SUMMARY}
-
-Enhanced GNOME file manager with fast search, animated thumbnails, and FUSE mount detection."
-
-          echo "message<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$MESSAGE" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          {
+            echo "message<<EOF"
+            echo "Update to v${VERSION}"
+            echo ""
+            echo "Changes:"
+            echo "${SUMMARY}"
+            echo ""
+            echo "Enhanced GNOME file manager with fast search, animated thumbnails, and FUSE mount detection."
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Publish nautilus-plus to AUR
         uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
