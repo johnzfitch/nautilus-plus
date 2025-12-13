@@ -506,11 +506,19 @@ search_engine_localsearch_start (NautilusSearchProvider *provider,
     g_object_ref (self);
     self->query_pending = TRUE;
 
-    /* Initialize result limiting from GSettings */
+    /* Initialize result limiting - use query limit if set, otherwise GSettings */
     self->results_count = 0;
     self->results_truncated = FALSE;
-    self->max_results = g_settings_get_uint (nautilus_preferences,
-                                             NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT);
+    guint query_limit = nautilus_query_get_max_results (self->query);
+    if (query_limit > 0)
+    {
+        self->max_results = query_limit;
+    }
+    else
+    {
+        self->max_results = g_settings_get_uint (nautilus_preferences,
+                                                 NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT);
+    }
 
     g_autoptr (GFile) location = nautilus_query_get_location (self->query);
 

@@ -112,11 +112,19 @@ search_thread_data_new (NautilusSearchEngineSimple *engine,
 
     data->cancellable = g_cancellable_new ();
 
-    /* Initialize result limiting from GSettings */
+    /* Initialize result limiting - use query limit if set, otherwise GSettings */
     data->total_hits = 0;
     data->results_truncated = FALSE;
-    data->max_results = g_settings_get_uint (nautilus_preferences,
-                                             NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT);
+    guint query_limit = nautilus_query_get_max_results (query);
+    if (query_limit > 0)
+    {
+        data->max_results = query_limit;
+    }
+    else
+    {
+        data->max_results = g_settings_get_uint (nautilus_preferences,
+                                                 NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT);
+    }
 
     g_mutex_init (&data->idle_mutex);
     data->idle_queue = g_queue_new ();

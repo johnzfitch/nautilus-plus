@@ -22,6 +22,12 @@
 
 #include "nautilus-query-editor.h"
 
+/* Debounce delay for full search after typing stops (ms) */
+#define SEARCH_DEBOUNCE_MS 200
+
+/* Immediate preview search returns limited results for responsiveness */
+#define PREVIEW_RESULTS_LIMIT 50
+
 #include <adwaita.h>
 #include <gdk/gdkkeysyms.h>
 #include <gio/gio.h>
@@ -56,7 +62,9 @@ struct _NautilusQueryEditor
     GCancellable *cancellable;
 
     guint search_changed_idle_id;
+    guint search_debounce_id;
     gboolean change_frozen;
+    gboolean preview_search_pending;
 
     GFile *location;
 
@@ -460,11 +468,20 @@ entry_activate_cb (NautilusQueryEditor *editor)
 }
 
 static void
-entry_changed_internal (NautilusQueryEditor *editor)
+entry_changed_internal (NautilusQueryEditor *editor,
+                        gboolean             is_preview)
 {
     const gchar *text = gtk_editable_get_text (GTK_EDITABLE (editor->text));
 
-    editor->search_changed_idle_id = 0;
+    if (is_preview)
+    {
+        editor->search_changed_idle_id = 0;
+        editor->preview_search_pending = FALSE;
+    }
+    else
+    {
+        editor->search_debounce_id = 0;
+    }
 
     if (editor->query == NULL)
     {
@@ -478,7 +495,30 @@ entry_changed_internal (NautilusQueryEditor *editor)
         }
     }
 
+    /* Set preview limit for immediate search, full limit for debounced */
+    if (is_preview)
+    {
+        nautilus_query_set_max_results (editor->query, PREVIEW_RESULTS_LIMIT);
+    }
+    else
+    {
+        /* Reset to user-configured limit (0 = use GSettings default) */
+        nautilus_query_set_max_results (editor->query, 0);
+    }
+
     nautilus_query_editor_changed (editor);
+}
+
+static void
+entry_changed_preview (NautilusQueryEditor *editor)
+{
+    entry_changed_internal (editor, TRUE);
+}
+
+static void
+entry_changed_full (NautilusQueryEditor *editor)
+{
+    entry_changed_internal (editor, FALSE);
 }
 
 static void
@@ -489,14 +529,26 @@ entry_changed_cb (NautilusQueryEditor *editor)
     gboolean is_empty = (text == NULL || *text == '\0');
     gtk_widget_set_child_visible (editor->clear_icon, !is_empty);
 
+    /* Cancel any pending searches */
     g_clear_handle_id (&editor->search_changed_idle_id, g_source_remove);
+    g_clear_handle_id (&editor->search_debounce_id, g_source_remove);
 
     if (editor->change_frozen)
     {
         return;
     }
 
-    editor->search_changed_idle_id = g_idle_add_once ((GSourceOnceFunc) entry_changed_internal,
+    /* Immediate preview search (limited results for responsiveness) */
+    if (!editor->preview_search_pending)
+    {
+        editor->preview_search_pending = TRUE;
+        editor->search_changed_idle_id = g_idle_add_once ((GSourceOnceFunc) entry_changed_preview,
+                                                          editor);
+    }
+
+    /* Debounced full search (fires after user stops typing) */
+    editor->search_debounce_id = g_timeout_add_once (SEARCH_DEBOUNCE_MS,
+                                                      (GSourceOnceFunc) entry_changed_full,
                                                       editor);
 }
 

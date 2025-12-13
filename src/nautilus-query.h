@@ -74,3 +74,7 @@ gdouble        nautilus_query_matches_string     (NautilusQuery *query, const gc
 gboolean       nautilus_query_has_active_filter  (NautilusQuery *query);
 gboolean       nautilus_query_is_empty           (NautilusQuery *query);
 gboolean       nautilus_query_is_global          (NautilusQuery *query);
+
+guint          nautilus_query_get_max_results    (NautilusQuery *query);
+void           nautilus_query_set_max_results    (NautilusQuery *query,
+                                                  guint          max_results);

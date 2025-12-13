@@ -254,20 +254,33 @@ search_engine_searchcache_start (NautilusSearchProvider *provider,
         location_path = g_file_get_path (location);
     }
 
-    // Launch subprocess with result limit to prevent CPU overload
-    g_autofree gchar *limit_str = g_strdup_printf ("%d", MAX_RESULTS);
+    // Launch subprocess with result limit - use query limit if set, otherwise default
+    guint query_limit = nautilus_query_get_max_results (self->query);
+    guint result_limit = (query_limit > 0) ? query_limit : MAX_RESULTS;
+    g_autofree gchar *limit_str = g_strdup_printf ("%u", result_limit);
     GSubprocess *subprocess;
 
-    // Note: sc doesn't have --path filtering yet, so we do global search
-    // and let the query handle path-based filtering (e.g., "/dev/" queries)
-    (void)location_path;  // Suppress unused warning
-
-    subprocess = g_subprocess_launcher_spawn (launcher, &error,
-                                              "sc",
-                                              "--full-path",
-                                              "--limit", limit_str,
-                                              search_text,
-                                              NULL);
+    // Launch sc with path filtering if location is specified
+    if (location_path != NULL)
+    {
+        subprocess = g_subprocess_launcher_spawn (launcher, &error,
+                                                  "sc",
+                                                  "--full-path",
+                                                  "--limit", limit_str,
+                                                  "--path", location_path,
+                                                  search_text,
+                                                  NULL);
+    }
+    else
+    {
+        // Global search (no path filter)
+        subprocess = g_subprocess_launcher_spawn (launcher, &error,
+                                                  "sc",
+                                                  "--full-path",
+                                                  "--limit", limit_str,
+                                                  search_text,
+                                                  NULL);
+    }
 
     if (subprocess == NULL)
     {
