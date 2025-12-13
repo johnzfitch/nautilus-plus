@@ -22,7 +22,7 @@
 
 #include "nautilus-query-editor.h"
 
-/* Debounce delay for full search after typing stops (ms) */
+/* Debounce delay for full search after typing stops (milliseconds) */
 #define SEARCH_DEBOUNCE_MS 200
 
 /* Immediate preview search returns limited results for responsiveness */
