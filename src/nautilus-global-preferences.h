@@ -117,6 +117,7 @@ typedef enum
 
 /* Search behaviour */
 #define NAUTILUS_PREFERENCES_RECURSIVE_SEARCH "recursive-search"
+#define NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT "search-results-limit"
 
 /* Context menu options */
 #define NAUTILUS_PREFERENCES_SHOW_DELETE_PERMANENTLY "show-delete-permanently"

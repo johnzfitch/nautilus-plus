@@ -29,6 +29,7 @@
 #include "nautilus-search-engine-localsearch.h"
 #include "nautilus-search-engine-recent.h"
 #include "nautilus-search-engine-simple.h"
+#include "nautilus-search-engine-searchcache.h"
 #include "nautilus-search-hit.h"
 #include "nautilus-search-provider.h"
 
@@ -44,6 +45,7 @@ struct _NautilusSearchEngine
     NautilusSearchProvider *model;
     NautilusSearchProvider *recent;
     NautilusSearchProvider *simple;
+    NautilusSearchProvider *searchcache;
 
     GHashTable *uris;
     guint providers_started;
@@ -281,6 +283,8 @@ nautilus_search_engine_set_search_type (NautilusSearchEngine *self,
 
     self->search_type = search_type;
 
+    setup_provider (self, &self->searchcache, NAUTILUS_SEARCH_TYPE_SEARCHCACHE,
+                    (CreateFunc) nautilus_search_engine_searchcache_new);
     setup_provider (self, &self->localsearch, NAUTILUS_SEARCH_TYPE_LOCALSEARCH,
                     (CreateFunc) nautilus_search_engine_localsearch_new);
     setup_provider (self, &self->model, NAUTILUS_SEARCH_TYPE_MODEL,

@@ -27,6 +27,7 @@
 #include "nautilus-search-hit.h"
 #include "nautilus-search-provider.h"
 #include "nautilus-ui-utilities.h"
+#include "nautilus-file-utilities.h"
 
 #include <string.h>
 #include <glib.h>
@@ -271,6 +272,18 @@ static void
 visit_directory (GFile            *dir,
                  SearchThreadData *data)
 {
+    /* Check for stale FUSE mounts before attempting enumeration.
+     * This prevents hanging indefinitely on disconnected SSHFS mounts. */
+    if (nautilus_file_is_on_fuse_mount (dir))
+    {
+        if (!nautilus_file_check_fuse_mount_responsive (dir, FUSE_MOUNT_CHECK_TIMEOUT_MS))
+        {
+            g_autofree char *dir_path = g_file_get_path (dir);
+            g_debug ("Skipping unresponsive FUSE mount: %s", dir_path);
+            return;
+        }
+    }
+
     const char *attributes = nautilus_query_has_mime_types (data->query)
                              ? STD_ATTRIBUTES_WITH_CONTENT_TYPE : STD_ATTRIBUTES;
 

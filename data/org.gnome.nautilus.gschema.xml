@@ -87,6 +87,11 @@
       <summary>Where to perform recursive search</summary>
       <description>Locations in which Files should search subfolders. Available values are “local-only”, “always”, “never”.</description>
     </key>
+    <key type="u" name="search-results-limit">
+      <default>1000</default>
+      <summary>Maximum number of search results</summary>
+      <description>Limit the number of search results to prevent memory exhaustion on very large file systems. Set to 0 for unlimited results.</description>
+    </key>
     <key name="search-filter-time-type" enum="org.gnome.nautilus.SearchFilterTimeType">
       <default>'last_modified'</default>
       <summary>Filter the search dates using either last used or last modified</summary>

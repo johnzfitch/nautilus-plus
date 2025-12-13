@@ -131,3 +131,9 @@ gboolean is_external_volume (GVolume *volume);
 
 GList *
 nautilus_location_list_from_file_list (GList *files);
+
+/* FUSE mount detection and timeout handling */
+gboolean nautilus_file_is_on_fuse_mount (GFile *file);
+gboolean nautilus_file_check_fuse_mount_responsive (GFile *file, guint timeout_ms);
+
+#define FUSE_MOUNT_CHECK_TIMEOUT_MS 1000
