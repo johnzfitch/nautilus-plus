@@ -119,6 +119,7 @@ libnautilus_sources = [
   'nautilus-file-undo-operations.c',
   'nautilus-file-undo-operations.h',
   'nautilus-file-utilities.c',
+  'nautilus-file-utilities-fuse.c',
   'nautilus-file-utilities.h',
   'nautilus-filename-utilities.c',
   'nautilus-filename-utilities.h',

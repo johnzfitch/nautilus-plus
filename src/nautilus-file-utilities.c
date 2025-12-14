@@ -1090,104 +1090,24 @@ is_external_volume (GVolume *volume)
 }
 
 /* Stale mount detection for FUSE/SSHFS filesystems */
+/* Implementation moved to nautilus-file-utilities-fuse.c (Ref-Counted Sentinel design) */
 
-typedef struct {
-    const char *path;
-    gboolean result;
-    gboolean done;
-    GMutex mutex;
-    GCond cond;
-} MountCheckData;
-
-static gpointer
-mount_check_thread_func (gpointer user_data)
-{
-    MountCheckData *data = user_data;
-    struct stat st;
-
-    /* Try to stat the path - this will block on stale FUSE mounts */
-    data->result = (stat (data->path, &st) == 0);
-
-    g_mutex_lock (&data->mutex);
-    data->done = TRUE;
-    g_cond_signal (&data->cond);
-    g_mutex_unlock (&data->mutex);
-
-    return NULL;
-}
-
-/**
- * nautilus_file_check_fuse_mount_responsive:
- * @file: A #GFile to check
- * @timeout_ms: Timeout in milliseconds (recommended: 500-1000)
- *
- * Checks if a file/directory is accessible within the given timeout.
- * This is useful for detecting stale FUSE/SSHFS mounts that would
- * otherwise block indefinitely.
- *
- * Returns: %TRUE if the path is accessible, %FALSE if timeout or error
- */
-gboolean
-nautilus_file_check_fuse_mount_responsive (GFile *file,
-                                           guint  timeout_ms)
-{
-    g_autofree char *path = NULL;
-    MountCheckData data = { 0 };
-    GThread *thread;
-    gint64 end_time;
-    gboolean result;
-
-    g_return_val_if_fail (G_IS_FILE (file), FALSE);
-
-    path = g_file_get_path (file);
-    if (path == NULL)
-    {
-        /* Non-local file (e.g., network URI) - assume accessible */
-        return TRUE;
-    }
-
-    g_mutex_init (&data.mutex);
-    g_cond_init (&data.cond);
-    data.path = path;
-    data.result = FALSE;
-    data.done = FALSE;
-
-    /* Spawn thread to do the blocking check */
-    thread = g_thread_new ("mount-check", mount_check_thread_func, &data);
-
-    /* Wait with timeout */
-    g_mutex_lock (&data.mutex);
-    end_time = g_get_monotonic_time () + (timeout_ms * G_TIME_SPAN_MILLISECOND);
-
-    while (!data.done)
-    {
-        if (!g_cond_wait_until (&data.cond, &data.mutex, end_time))
-        {
-            /* Timeout - mount is unresponsive */
-            g_mutex_unlock (&data.mutex);
-            g_debug ("Mount check timeout for %s after %u ms", path, timeout_ms);
-            /* Thread will eventually complete and clean up */
-            g_thread_unref (thread);
-            g_mutex_clear (&data.mutex);
-            g_cond_clear (&data.cond);
-            return FALSE;
-        }
-    }
-
-    result = data.result;
-    g_mutex_unlock (&data.mutex);
-
-    g_thread_join (thread);
-    g_mutex_clear (&data.mutex);
-    g_cond_clear (&data.cond);
-
-    return result;
-}
-
-/* Cached FUSE mount list for performance */
+/* Cached FUSE mount list for performance (thread-safe) */
 static GList *cached_fuse_mounts = NULL;
 static gint64 fuse_mount_cache_time = 0;
+static GMutex fuse_cache_mutex;
+static gboolean fuse_cache_initialized = FALSE;
 #define FUSE_MOUNT_CACHE_TTL_MS 5000  /* Cache for 5 seconds */
+
+static void
+ensure_fuse_cache_initialized (void)
+{
+    if (!fuse_cache_initialized)
+    {
+        g_mutex_init (&fuse_cache_mutex);
+        fuse_cache_initialized = TRUE;
+    }
+}
 
 static void
 refresh_fuse_mount_cache (void)
@@ -1196,10 +1116,14 @@ refresh_fuse_mount_cache (void)
     char line[1024];
     gint64 now = g_get_monotonic_time () / 1000;
 
+    ensure_fuse_cache_initialized ();
+    g_mutex_lock (&fuse_cache_mutex);
+
     /* Check if cache is still valid */
     if (cached_fuse_mounts != NULL &&
         (now - fuse_mount_cache_time) < FUSE_MOUNT_CACHE_TTL_MS)
     {
+        g_mutex_unlock (&fuse_cache_mutex);
         return;
     }
 
@@ -1210,6 +1134,7 @@ refresh_fuse_mount_cache (void)
     mounts = fopen ("/proc/mounts", "r");
     if (mounts == NULL)
     {
+        g_mutex_unlock (&fuse_cache_mutex);
         return;
     }
 
@@ -1230,6 +1155,8 @@ refresh_fuse_mount_cache (void)
 
     fclose (mounts);
     fuse_mount_cache_time = now;
+
+    g_mutex_unlock (&fuse_cache_mutex);
 }
 
 /**
@@ -1245,6 +1172,7 @@ gboolean
 nautilus_file_is_on_fuse_mount (GFile *file)
 {
     g_autofree char *path = NULL;
+    gboolean result = FALSE;
 
     path = g_file_get_path (file);
     if (path == NULL)
@@ -1254,6 +1182,10 @@ nautilus_file_is_on_fuse_mount (GFile *file)
 
     refresh_fuse_mount_cache ();
 
+    /* Lock for reading the cache */
+    ensure_fuse_cache_initialized ();
+    g_mutex_lock (&fuse_cache_mutex);
+
     for (GList *l = cached_fuse_mounts; l != NULL; l = l->next)
     {
         const char *mount_point = l->data;
@@ -1262,9 +1194,12 @@ nautilus_file_is_on_fuse_mount (GFile *file)
         if (g_str_has_prefix (path, mount_point) &&
             (path[len] == '/' || path[len] == '\0'))
         {
-            return TRUE;
+            result = TRUE;
+            break;
         }
     }
 
-    return FALSE;
+    g_mutex_unlock (&fuse_cache_mutex);
+
+    return result;
 }
