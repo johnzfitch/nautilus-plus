@@ -29,6 +29,9 @@
                 <property name="hexpand">1</property>
                 <property name="xalign">0</property>
                 <property name="ellipsize">middle</property>
+                <attributes>
+                  <attribute name="scale" value="1.15"/>
+                </attributes>
                 <style>
                   <class name="sidebar-label"/>
                 </style>

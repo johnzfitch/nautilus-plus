@@ -14,6 +14,7 @@
 #include "nautilus-search-engine-searchcache.h"
 
 #include "nautilus-file.h"
+#include "nautilus-global-preferences.h"
 #include "nautilus-query.h"
 #include "nautilus-search-hit.h"
 #include "nautilus-search-provider.h"
@@ -254,9 +255,10 @@ search_engine_searchcache_start (NautilusSearchProvider *provider,
         location_path = g_file_get_path (location);
     }
 
-    // Launch subprocess with result limit - use query limit if set, otherwise default
+    // Launch subprocess with result limit - use query limit if set, otherwise use preferences
     guint query_limit = nautilus_query_get_max_results (self->query);
-    guint result_limit = (query_limit > 0) ? query_limit : MAX_RESULTS;
+    guint result_limit = (query_limit > 0) ? query_limit :
+                         g_settings_get_uint (nautilus_preferences, NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT);
     g_autofree gchar *limit_str = g_strdup_printf ("%u", result_limit);
     GSubprocess *subprocess;
 

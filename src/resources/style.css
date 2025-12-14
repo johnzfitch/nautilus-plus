@@ -386,3 +386,8 @@ label.pill.error {
   background-color: alpha(@error_color, 0.15);
   color: @error_color;
 }
+
+/* Sidebar font size - increase for better readability */
+.sidebar-row .sidebar-label {
+  font-size: 1.15em;
+}
