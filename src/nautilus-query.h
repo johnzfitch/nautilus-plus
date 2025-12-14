@@ -44,7 +44,13 @@ GFile*         nautilus_query_get_location       (NautilusQuery *query);
 void           nautilus_query_set_location       (NautilusQuery *query,
                                                   GFile         *location);
 
-GPtrArray *    nautilus_query_get_mime_types     (NautilusQuery *query);
+gboolean
+nautilus_query_has_mime_types (NautilusQuery *self);
+gboolean
+nautilus_query_matches_mime_type (NautilusQuery *self,
+                                  const char    *mime_type);
+char *
+nautilus_query_get_mime_type_str (NautilusQuery *query);
 void           nautilus_query_set_mime_types     (NautilusQuery *query, GPtrArray *mime_types);
 
 gboolean
@@ -74,7 +80,3 @@ gdouble        nautilus_query_matches_string     (NautilusQuery *query, const gc
 gboolean       nautilus_query_has_active_filter  (NautilusQuery *query);
 gboolean       nautilus_query_is_empty           (NautilusQuery *query);
 gboolean       nautilus_query_is_global          (NautilusQuery *query);
-
-guint          nautilus_query_get_max_results    (NautilusQuery *query);
-void           nautilus_query_set_max_results    (NautilusQuery *query,
-                                                  guint          max_results);

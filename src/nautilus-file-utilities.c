@@ -40,8 +40,6 @@
 #include <gio/gio.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <sys/stat.h>
-#include <stdio.h>
 
 #define NAUTILUS_USER_DIRECTORY_NAME "nautilus"
 #define DEFAULT_NAUTILUS_DIRECTORY_MODE (0755)
@@ -1089,147 +1087,32 @@ is_external_volume (GVolume *volume)
     return is_external;
 }
 
-/* Stale mount detection for FUSE/SSHFS filesystems */
+/* FUSE mount detection - cache mount list for performance */
+static GHashTable *fuse_mount_cache = NULL;
+static time_t fuse_mount_cache_time = 0;
+#define FUSE_CACHE_LIFETIME_SECONDS 5
 
-typedef struct {
-    const char *path;
-    gboolean result;
-    gboolean done;
-    GMutex mutex;
-    GCond cond;
+typedef struct
+{
+    gboolean accessible;
+    gboolean timed_out;
 } MountCheckData;
 
 static gpointer
-mount_check_thread_func (gpointer user_data)
+check_path_accessible_thread (gpointer user_data)
 {
     MountCheckData *data = user_data;
+    g_autofree char *path = NULL;
     struct stat st;
 
-    /* Try to stat the path - this will block on stale FUSE mounts */
-    data->result = (stat (data->path, &st) == 0);
-
-    g_mutex_lock (&data->mutex);
-    data->done = TRUE;
-    g_cond_signal (&data->cond);
-    g_mutex_unlock (&data->mutex);
+    /* Use a non-blocking check with stat() */
+    path = (char *) user_data + sizeof (MountCheckData);
+    if (stat (path, &st) == 0)
+    {
+        data->accessible = TRUE;
+    }
 
     return NULL;
-}
-
-/**
- * nautilus_file_check_fuse_mount_responsive:
- * @file: A #GFile to check
- * @timeout_ms: Timeout in milliseconds (recommended: 500-1000)
- *
- * Checks if a file/directory is accessible within the given timeout.
- * This is useful for detecting stale FUSE/SSHFS mounts that would
- * otherwise block indefinitely.
- *
- * Returns: %TRUE if the path is accessible, %FALSE if timeout or error
- */
-gboolean
-nautilus_file_check_fuse_mount_responsive (GFile *file,
-                                           guint  timeout_ms)
-{
-    g_autofree char *path = NULL;
-    MountCheckData data = { 0 };
-    GThread *thread;
-    gint64 end_time;
-    gboolean result;
-
-    g_return_val_if_fail (G_IS_FILE (file), FALSE);
-
-    path = g_file_get_path (file);
-    if (path == NULL)
-    {
-        /* Non-local file (e.g., network URI) - assume accessible */
-        return TRUE;
-    }
-
-    g_mutex_init (&data.mutex);
-    g_cond_init (&data.cond);
-    data.path = path;
-    data.result = FALSE;
-    data.done = FALSE;
-
-    /* Spawn thread to do the blocking check */
-    thread = g_thread_new ("mount-check", mount_check_thread_func, &data);
-
-    /* Wait with timeout */
-    g_mutex_lock (&data.mutex);
-    end_time = g_get_monotonic_time () + (timeout_ms * G_TIME_SPAN_MILLISECOND);
-
-    while (!data.done)
-    {
-        if (!g_cond_wait_until (&data.cond, &data.mutex, end_time))
-        {
-            /* Timeout - mount is unresponsive */
-            g_mutex_unlock (&data.mutex);
-            g_debug ("Mount check timeout for %s after %u ms", path, timeout_ms);
-            /* Thread will eventually complete and clean up */
-            g_thread_unref (thread);
-            g_mutex_clear (&data.mutex);
-            g_cond_clear (&data.cond);
-            return FALSE;
-        }
-    }
-
-    result = data.result;
-    g_mutex_unlock (&data.mutex);
-
-    g_thread_join (thread);
-    g_mutex_clear (&data.mutex);
-    g_cond_clear (&data.cond);
-
-    return result;
-}
-
-/* Cached FUSE mount list for performance */
-static GList *cached_fuse_mounts = NULL;
-static gint64 fuse_mount_cache_time = 0;
-#define FUSE_MOUNT_CACHE_TTL_MS 5000  /* Cache for 5 seconds */
-
-static void
-refresh_fuse_mount_cache (void)
-{
-    FILE *mounts;
-    char line[1024];
-    gint64 now = g_get_monotonic_time () / 1000;
-
-    /* Check if cache is still valid */
-    if (cached_fuse_mounts != NULL &&
-        (now - fuse_mount_cache_time) < FUSE_MOUNT_CACHE_TTL_MS)
-    {
-        return;
-    }
-
-    /* Clear old cache */
-    g_list_free_full (cached_fuse_mounts, g_free);
-    cached_fuse_mounts = NULL;
-
-    mounts = fopen ("/proc/mounts", "r");
-    if (mounts == NULL)
-    {
-        return;
-    }
-
-    while (fgets (line, sizeof (line), mounts) != NULL)
-    {
-        char mount_point[512];
-        char fs_type[64];
-
-        if (sscanf (line, "%*s %511s %63s", mount_point, fs_type) == 2)
-        {
-            if (g_str_has_prefix (fs_type, "fuse"))
-            {
-                cached_fuse_mounts = g_list_prepend (cached_fuse_mounts,
-                                                      g_strdup (mount_point));
-            }
-        }
-    }
-
-    fclose (mounts);
-    fuse_mount_cache_time = now;
 }
 
 /**
@@ -1252,19 +1135,132 @@ nautilus_file_is_on_fuse_mount (GFile *file)
         return FALSE;
     }
 
-    refresh_fuse_mount_cache ();
-
-    for (GList *l = cached_fuse_mounts; l != NULL; l = l->next)
+    time_t now = time (NULL);
+    if (fuse_mount_cache == NULL || (now - fuse_mount_cache_time) > FUSE_CACHE_LIFETIME_SECONDS)
     {
-        const char *mount_point = l->data;
-        size_t len = strlen (mount_point);
+        /* Rebuild cache by reading /proc/mounts */
+        if (fuse_mount_cache != NULL)
+        {
+            g_hash_table_destroy (fuse_mount_cache);
+        }
+        fuse_mount_cache = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 
-        if (g_str_has_prefix (path, mount_point) &&
-            (path[len] == '/' || path[len] == '\0'))
+        FILE *mounts = fopen ("/proc/mounts", "r");
+        if (mounts)
+        {
+            char line[4096];
+            while (fgets (line, sizeof (line), mounts))
+            {
+                char *mount_point = NULL;
+                char *fs_type = NULL;
+
+                /* Parse: device mountpoint fstype options dump pass */
+                char *token = strtok (line, " \t");
+                if (token)
+                {
+                    token = strtok (NULL, " \t");
+                }                                        /* mount point */
+                if (token)
+                {
+                    mount_point = token;
+                    token = strtok (NULL, " \t");
+                }         /* fs type */
+                if (token)
+                {
+                    fs_type = token;
+                }
+
+                if (mount_point && fs_type && strstr (fs_type, "fuse"))
+                {
+                    g_hash_table_insert (fuse_mount_cache, g_strdup (mount_point), GINT_TO_POINTER (1));
+                }
+            }
+            fclose (mounts);
+        }
+        fuse_mount_cache_time = now;
+    }
+
+    /* Check if path starts with any FUSE mount point */
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init (&iter, fuse_mount_cache);
+    while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+        const char *mount_point = key;
+        size_t mount_len = strlen (mount_point);
+        if (strncmp (path, mount_point, mount_len) == 0 &&
+            (path[mount_len] == '\0' || path[mount_len] == '/'))
         {
             return TRUE;
         }
     }
 
     return FALSE;
+}
+
+/**
+ * nautilus_file_check_fuse_mount_responsive:
+ * @file: A #GFile to check
+ * @timeout_ms: Timeout in milliseconds (recommended: 500-1000)
+ *
+ * Checks if a file/directory is accessible within the given timeout.
+ * This is useful for detecting stale FUSE/SSHFS mounts that would
+ * otherwise block indefinitely.
+ *
+ * Returns: %TRUE if the path is accessible, %FALSE if timeout or error
+ */
+gboolean
+nautilus_file_check_fuse_mount_responsive (GFile *file,
+                                           guint  timeout_ms)
+{
+    g_autofree char *path = NULL;
+    MountCheckData data = { 0 };
+    GThread *thread;
+
+    path = g_file_get_path (file);
+    if (path == NULL)
+    {
+        return TRUE;            /* Not a local path, assume accessible */
+    }
+
+    /* Allocate combined buffer for data + path */
+    size_t path_len = strlen (path) + 1;
+    char *buffer = g_malloc (sizeof (MountCheckData) + path_len);
+    MountCheckData *thread_data = (MountCheckData *) buffer;
+    memcpy (buffer + sizeof (MountCheckData), path, path_len);
+
+    thread = g_thread_new ("mount-check", check_path_accessible_thread, buffer);
+
+    /* Wait for thread with timeout */
+    gint64 end_time = g_get_monotonic_time () + timeout_ms * 1000;
+    gboolean finished = FALSE;
+
+    while (g_get_monotonic_time () < end_time)
+    {
+        if (g_thread_try_join (thread))
+        {
+            finished = TRUE;
+            break;
+        }
+        g_usleep (10000);                       /* 10ms */
+    }
+
+    gboolean result = FALSE;
+    if (finished)
+    {
+        result = thread_data->accessible;
+    }
+    else
+    {
+        /* Thread is still running - path is unresponsive */
+        thread_data->timed_out = TRUE;
+        /* Note: We leak the thread here intentionally - it will exit when stat() returns */
+    }
+
+    if (finished)
+    {
+        g_free (buffer);
+    }
+
+    return result;
 }
