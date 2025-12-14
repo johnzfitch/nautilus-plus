@@ -108,18 +108,14 @@ search_finished (NautilusSearchEngineSearchCache *self,
 
     if (error && !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-        g_debug ("SearchCache engine error %s", error->message);
-        nautilus_search_provider_error (NAUTILUS_SEARCH_PROVIDER (self), error->message);
+        g_warning ("SearchCache engine error: %s", error->message);
     }
-    else
+    else if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-        nautilus_search_provider_finished (NAUTILUS_SEARCH_PROVIDER (self),
-                                           NAUTILUS_SEARCH_PROVIDER_STATUS_NORMAL);
-        if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-        {
-            g_debug ("SearchCache engine cancelled");
-        }
+        g_debug ("SearchCache engine cancelled");
     }
+
+    nautilus_search_provider_finished (NAUTILUS_SEARCH_PROVIDER (self));
 }
 
 static void
@@ -236,8 +232,7 @@ search_engine_searchcache_start (NautilusSearchProvider *provider,
     if (sc_path == NULL)
     {
         g_debug ("SearchCache engine: 'sc' not found in PATH, skipping");
-        nautilus_search_provider_finished (NAUTILUS_SEARCH_PROVIDER (self),
-                                           NAUTILUS_SEARCH_PROVIDER_STATUS_NORMAL);
+        nautilus_search_provider_finished (NAUTILUS_SEARCH_PROVIDER (self));
         return FALSE;
     }
 
