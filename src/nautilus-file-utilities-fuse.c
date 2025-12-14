@@ -59,7 +59,7 @@ typedef struct {
 static GThreadPool *fuse_check_pool = NULL;
 static GHashTable *active_jobs = NULL;  /* path -> MountCheckJob* */
 static GMutex global_lock;
-static gboolean initialized = FALSE;
+static GOnce init_once = G_ONCE_INIT;
 
 /* ========== MountCheckJob Lifecycle ========== */
 
@@ -138,43 +138,42 @@ fuse_check_worker (gpointer data, gpointer user_data)
 
 /* ========== Initialization ========== */
 
-static void
+static gpointer
+fuse_check_init_once (gpointer data)
+{
+    /* Create private thread pool with STRICT LIMIT
+     * If 3 mounts are dead and threads leaked, we stop checking
+     * new mounts to protect the app. Better to skip checks than crash. */
+    GError *error = NULL;
+    fuse_check_pool = g_thread_pool_new (fuse_check_worker,
+                                         NULL,  /* user_data */
+                                         3,     /* max_threads - SAFETY VALVE */
+                                         FALSE, /* exclusive */
+                                         &error);
+    if (error)
+    {
+        g_warning ("Failed to create FUSE check thread pool: %s", error->message);
+        g_error_free (error);
+        return NULL;
+    }
+
+    g_mutex_init (&global_lock);
+
+    active_jobs = g_hash_table_new_full (g_str_hash,
+                                         g_str_equal,
+                                         g_free,
+                                         (GDestroyNotify)mount_check_job_unref);
+
+    g_debug ("FUSE check system initialized (max 3 concurrent checks)");
+
+    return &fuse_check_pool;  /* Non-NULL indicates success */
+}
+
+static gboolean
 ensure_fuse_check_initialized (void)
 {
-    if (initialized)
-    {
-        return;
-    }
-
-    g_mutex_lock (&global_lock);
-    if (!initialized)
-    {
-        /* Create private thread pool with STRICT LIMIT
-         * If 3 mounts are dead and threads leaked, we stop checking
-         * new mounts to protect the app. Better to skip checks than crash. */
-        GError *error = NULL;
-        fuse_check_pool = g_thread_pool_new (fuse_check_worker,
-                                             NULL,  /* user_data */
-                                             3,     /* max_threads - SAFETY VALVE */
-                                             FALSE, /* exclusive */
-                                             &error);
-        if (error)
-        {
-            g_warning ("Failed to create FUSE check thread pool: %s", error->message);
-            g_error_free (error);
-            g_mutex_unlock (&global_lock);
-            return;
-        }
-
-        active_jobs = g_hash_table_new_full (g_str_hash,
-                                             g_str_equal,
-                                             g_free,
-                                             (GDestroyNotify)mount_check_job_unref);
-
-        initialized = TRUE;
-        g_debug ("FUSE check system initialized (max 3 concurrent checks)");
-    }
-    g_mutex_unlock (&global_lock);
+    g_once (&init_once, fuse_check_init_once, NULL);
+    return (fuse_check_pool != NULL);
 }
 
 /* ========== Public API ========== */
@@ -199,9 +198,7 @@ nautilus_file_check_fuse_mount_responsive (GFile *file, guint timeout_ms)
 {
     g_return_val_if_fail (G_IS_FILE (file), FALSE);
 
-    ensure_fuse_check_initialized ();
-
-    if (!initialized)
+    if (!ensure_fuse_check_initialized ())
     {
         /* Initialization failed - fail safe */
         return FALSE;
@@ -233,6 +230,7 @@ nautilus_file_check_fuse_mount_responsive (GFile *file, guint timeout_ms)
         /* Hash table now owns 1 ref */
 
         mount_check_job_ref (job);  /* Thread will own 1 ref */
+        mount_check_job_ref (job);  /* Waiter will own 1 ref */
 
         GError *error = NULL;
         if (!g_thread_pool_push (fuse_check_pool, job, &error))
@@ -246,8 +244,9 @@ nautilus_file_check_fuse_mount_responsive (GFile *file, guint timeout_ms)
             }
 
             /* Clean up */
-            g_hash_table_remove (active_jobs, path);
-            mount_check_job_unref (job);  /* Drop our ref */
+            g_hash_table_remove (active_jobs, path);  /* Drops hash table ref */
+            mount_check_job_unref (job);  /* Drop thread ref */
+            mount_check_job_unref (job);  /* Drop waiter ref */
             g_mutex_unlock (&global_lock);
             return FALSE;
         }
@@ -285,10 +284,12 @@ nautilus_file_check_fuse_mount_responsive (GFile *file, guint timeout_ms)
             path, result ? "RESPONSIVE" : "UNRESPONSIVE");
 
 cleanup:
+    /* Read thread_finished state while holding the lock */
+    gboolean thread_is_finished = job->thread_finished;
     g_mutex_unlock (&job->lock);
 
     /* ========== PHASE 3: Cleanup (if finished) ========== */
-    if (job->thread_finished)
+    if (thread_is_finished)
     {
         /* Thread completed - remove from global table */
         g_mutex_lock (&global_lock);
