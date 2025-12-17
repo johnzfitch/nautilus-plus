@@ -18,6 +18,7 @@
 
   <maintainer>
     <foaf:Person>
+<<<<<<< HEAD
       <foaf:name>António Fernandes</foaf:name>
       <foaf:mbox rdf:resource="mailto:antoniof@gnome.org" />
       <gnome:userid>antoniof</gnome:userid>
@@ -42,6 +43,8 @@
 
   <maintainer>
     <foaf:Person>
+=======
+>>>>>>> upstream/main
       <foaf:name>Peter Eisenmann</foaf:name>
       <foaf:mbox rdf:resource="mailto:p3732@getgoogleoff.me" />
       <gnome:userid>peisen</gnome:userid>

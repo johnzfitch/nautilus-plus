@@ -1,7 +1,10 @@
 build/
 .*/
 !.gitlab/
+<<<<<<< HEAD
 !.github/
+=======
+>>>>>>> upstream/main
 
 # Ignore meson's subprojects folder
 /subprojects
@@ -16,6 +19,7 @@ build/
 # Ignore captures
 /*.syscap
 /heaptrack.nautilus.*
+<<<<<<< HEAD
 
 # Claude Code local notes
 CLAUDE.md
@@ -71,3 +75,5 @@ pyghidra_mcp_projects/
 
 # Test reports
 test-reports/
+=======
+>>>>>>> upstream/main
