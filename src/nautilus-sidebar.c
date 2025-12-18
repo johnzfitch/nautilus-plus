@@ -38,7 +38,6 @@
 #include "nautilus-trash-monitor.h"
 #include "nautilus-ui-utilities.h"
 #include "nautilus-window-slot.h"
-#include "nautilus-window.h"
 
 #ifdef GDK_WINDOWING_X11
 #include <gdk/x11/gdkx.h>
@@ -105,7 +104,6 @@ struct _NautilusSidebar
     NautilusWindowSlot *window_slot;
     GSignalGroup *slot_signal_group;
 
-    GtkWidget *vbox;
     GtkWidget *swin;
     GtkWidget *list_box;
     GtkWidget *new_bookmark_row;
@@ -131,10 +129,6 @@ struct _NautilusSidebar
 
     GtkWidget *trash_row;
     gboolean show_trash;
-
-    /* Search-cache status indicator */
-    GtkWidget *searchcache_status_label;
-    guint searchcache_status_timer_id;
 
     /* DND */
     gboolean dragging_over;
@@ -3570,118 +3564,6 @@ update_location (NautilusSidebar *self)
     nautilus_sidebar_set_location (self, location);
 }
 
-/* Search-cache status indicator */
-static gboolean
-check_searchcache_status (void)
-{
-    /* Check if search-cache daemon is running via systemctl --user status */
-    g_autoptr (GSubprocess) proc = NULL;
-    g_autoptr (GError) error = NULL;
-    g_autofree gchar *output = NULL;
-
-    proc = g_subprocess_new (G_SUBPROCESS_FLAGS_STDOUT_PIPE,
-                             &error,
-                             "systemctl", "--user", "is-active", "search-cache",
-                             NULL);
-
-    if (proc == NULL)
-    {
-        g_debug ("Failed to spawn systemctl: %s", error->message);
-        return FALSE;
-    }
-
-    if (!g_subprocess_communicate_utf8 (proc, NULL, NULL, &output, NULL, &error))
-    {
-        g_debug ("Failed to communicate with systemctl: %s", error->message);
-        return FALSE;
-    }
-
-    /* systemctl is-active returns "active" if running */
-    if (output != NULL && g_str_has_prefix (g_strstrip (output), "active"))
-    {
-        return TRUE;
-    }
-
-    return FALSE;
-}
-
-static void
-update_searchcache_status_label (NautilusSidebar *sidebar)
-{
-    gboolean is_online = check_searchcache_status ();
-    const gchar *text;
-    const gchar *css_class;
-
-    if (is_online)
-    {
-        text = "search-cache: online";
-        css_class = "success";
-    }
-    else
-    {
-        text = "search-cache: offline";
-        css_class = "error";
-    }
-
-    /* Update sidebar label */
-    gtk_label_set_text (GTK_LABEL (sidebar->searchcache_status_label), text);
-    gtk_widget_remove_css_class (sidebar->searchcache_status_label, "error");
-    gtk_widget_remove_css_class (sidebar->searchcache_status_label, "success");
-    gtk_widget_add_css_class (sidebar->searchcache_status_label, css_class);
-
-    /* Also update action bar label in the window */
-    GtkWidget *window = GTK_WIDGET (gtk_widget_get_root (GTK_WIDGET (sidebar)));
-    if (NAUTILUS_IS_WINDOW (window))
-    {
-        nautilus_window_update_searchcache_status (NAUTILUS_WINDOW (window), text, css_class);
-    }
-}
-
-static gboolean
-searchcache_status_timer_callback (gpointer user_data)
-{
-    NautilusSidebar *sidebar = NAUTILUS_PLACES_SIDEBAR (user_data);
-    update_searchcache_status_label (sidebar);
-    return G_SOURCE_CONTINUE;  /* Keep timer running */
-}
-
-static void
-on_searchcache_status_clicked (GtkGestureClick *gesture,
-                               gint             n_press,
-                               gdouble          x,
-                               gdouble          y,
-                               gpointer         user_data)
-{
-    NautilusSidebar *sidebar = NAUTILUS_PLACES_SIDEBAR (user_data);
-
-    /* Check if offline before attempting restart */
-    if (!check_searchcache_status ())
-    {
-        g_debug ("search-cache offline, attempting restart...");
-
-        /* Restart search-cache daemon */
-        g_autoptr (GSubprocess) proc = NULL;
-        g_autoptr (GError) error = NULL;
-
-        proc = g_subprocess_new (G_SUBPROCESS_FLAGS_NONE,
-                                &error,
-                                "systemctl", "--user", "start", "search-cache",
-                                NULL);
-
-        if (proc == NULL)
-        {
-            g_warning ("Failed to restart search-cache: %s", error->message);
-            return;
-        }
-
-        /* Wait briefly for process to complete */
-        g_subprocess_wait (proc, NULL, NULL);
-
-        /* Update status immediately after restart attempt */
-        g_timeout_add (500, (GSourceFunc) searchcache_status_timer_callback, sidebar);
-    }
-}
-
 static void
 nautilus_sidebar_init (NautilusSidebar *sidebar)
 {
@@ -3712,13 +3594,8 @@ nautilus_sidebar_init (NautilusSidebar *sidebar)
                              G_CALLBACK (update_trash_icon), sidebar,
                              G_CONNECT_SWAPPED);
 
-    /* Create box to hold scrolled window and status label */
-    sidebar->vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-    gtk_widget_set_parent (sidebar->vbox, GTK_WIDGET (sidebar));
-
     sidebar->swin = gtk_scrolled_window_new ();
-    gtk_widget_set_vexpand (sidebar->swin, TRUE);
-    gtk_box_append (GTK_BOX (sidebar->vbox), sidebar->swin);
+    gtk_widget_set_parent (sidebar->swin, GTK_WIDGET (sidebar));
 
     gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (sidebar->swin),
                                     GTK_POLICY_NEVER,
@@ -3806,39 +3683,6 @@ nautilus_sidebar_init (NautilusSidebar *sidebar)
                                      entries, G_N_ELEMENTS (entries),
                                      sidebar);
     gtk_widget_insert_action_group (GTK_WIDGET (sidebar), "row", sidebar->row_actions);
-
-    /* Create search-cache status indicator */
-    sidebar->searchcache_status_label = gtk_label_new ("");
-    gtk_widget_set_halign (sidebar->searchcache_status_label, GTK_ALIGN_START);
-    gtk_widget_set_margin_start (sidebar->searchcache_status_label, 6);
-    gtk_widget_set_margin_end (sidebar->searchcache_status_label, 6);
-    gtk_widget_set_margin_top (sidebar->searchcache_status_label, 6);
-    gtk_widget_set_margin_bottom (sidebar->searchcache_status_label, 6);
-
-    /* Enable line wrapping and natural sizing for narrow sidebars */
-    gtk_label_set_wrap (GTK_LABEL (sidebar->searchcache_status_label), TRUE);
-    gtk_label_set_wrap_mode (GTK_LABEL (sidebar->searchcache_status_label), PANGO_WRAP_WORD_CHAR);
-    gtk_label_set_max_width_chars (GTK_LABEL (sidebar->searchcache_status_label), 15);
-    gtk_label_set_xalign (GTK_LABEL (sidebar->searchcache_status_label), 0.0);
-    gtk_widget_set_hexpand (sidebar->searchcache_status_label, FALSE);
-
-    /* Add CSS classes for pill styling */
-    gtk_widget_add_css_class (sidebar->searchcache_status_label, "pill");
-    gtk_widget_add_css_class (sidebar->searchcache_status_label, "sidebar-label");
-
-    gtk_box_append (GTK_BOX (sidebar->vbox), sidebar->searchcache_status_label);
-
-    /* Add click handler for restart functionality */
-    GtkGesture *click_gesture = gtk_gesture_click_new ();
-    g_signal_connect (click_gesture, "pressed",
-                      G_CALLBACK (on_searchcache_status_clicked), sidebar);
-    gtk_widget_add_controller (sidebar->searchcache_status_label, GTK_EVENT_CONTROLLER (click_gesture));
-
-    /* Initialize status and start periodic updates (every 5 seconds) */
-    update_searchcache_status_label (sidebar);
-    sidebar->searchcache_status_timer_id = g_timeout_add_seconds (5,
-                                                                   searchcache_status_timer_callback,
-                                                                   sidebar);
 
     gtk_accessible_update_property (GTK_ACCESSIBLE (sidebar),
                                     GTK_ACCESSIBLE_PROPERTY_LABEL, _("Sidebar"),
@@ -3974,7 +3818,6 @@ nautilus_sidebar_dispose (GObject *object)
     g_clear_pointer (&sidebar->rename_uri, g_free);
 
     g_clear_handle_id (&sidebar->hover_timer_id, g_source_remove);
-    g_clear_handle_id (&sidebar->searchcache_status_timer_id, g_source_remove);
 
 #ifdef HAVE_CLOUDPROVIDERS
     for (l = sidebar->unready_accounts; l != NULL; l = l->next)
@@ -4022,7 +3865,7 @@ nautilus_sidebar_measure (GtkWidget      *widget,
 {
     NautilusSidebar *sidebar = NAUTILUS_PLACES_SIDEBAR (widget);
 
-    gtk_widget_measure (sidebar->vbox,
+    gtk_widget_measure (sidebar->swin,
                         orientation,
                         for_size,
                         minimum, natural,
@@ -4037,7 +3880,7 @@ nautilus_sidebar_size_allocate (GtkWidget *widget,
 {
     NautilusSidebar *sidebar = NAUTILUS_PLACES_SIDEBAR (widget);
 
-    gtk_widget_size_allocate (sidebar->vbox,
+    gtk_widget_size_allocate (sidebar->swin,
                               &(GtkAllocation) { 0, 0, width, height },
                               baseline);
 
@@ -4049,18 +3892,6 @@ nautilus_sidebar_size_allocate (GtkWidget *widget,
     if (sidebar->rename_popover)
     {
         gtk_popover_present (GTK_POPOVER (sidebar->rename_popover));
-    }
-}
-
-void
-nautilus_sidebar_set_searchcache_label_visible (NautilusSidebar *sidebar,
-                                                 gboolean         visible)
-{
-    g_return_if_fail (NAUTILUS_IS_PLACES_SIDEBAR (sidebar));
-
-    if (sidebar->searchcache_status_label != NULL)
-    {
-        gtk_widget_set_visible (sidebar->searchcache_status_label, visible);
     }
 }
 

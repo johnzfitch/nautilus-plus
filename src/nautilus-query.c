@@ -52,9 +52,6 @@ struct _NautilusQuery
     gboolean search_content;
 
     GPtrArray *prepared_words;
-
-    /* Max results limit (0 = use GSettings default) */
-    guint max_results;
 };
 
 G_DEFINE_TYPE (NautilusQuery, nautilus_query, G_TYPE_OBJECT);
@@ -522,21 +519,4 @@ nautilus_query_is_global (NautilusQuery *self)
     g_return_val_if_fail (NAUTILUS_IS_QUERY (self), FALSE);
 
     return (self->location == NULL);
-}
-
-guint
-nautilus_query_get_max_results (NautilusQuery *query)
-{
-    g_return_val_if_fail (NAUTILUS_IS_QUERY (query), 0);
-
-    return query->max_results;
-}
-
-void
-nautilus_query_set_max_results (NautilusQuery *query,
-                                guint          max_results)
-{
-    g_return_if_fail (NAUTILUS_IS_QUERY (query));
-
-    query->max_results = max_results;
 }
