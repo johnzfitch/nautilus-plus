@@ -311,6 +311,7 @@ nautilus_search_engine_finalize (GObject *object)
     g_clear_object (&self->recent);
     g_clear_object (&self->model);
     g_clear_object (&self->simple);
+    g_clear_object (&self->searchcache);
     g_clear_object (&self->query);
 
     G_OBJECT_CLASS (nautilus_search_engine_parent_class)->finalize (object);
