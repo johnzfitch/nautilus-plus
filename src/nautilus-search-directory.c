@@ -28,7 +28,6 @@
 #include "nautilus-file-private.h"
 #include "nautilus-file-utilities.h"
 #include "nautilus-file.h"
-#include "nautilus-global-preferences.h"
 #include "nautilus-query.h"
 #include "nautilus-scheme.h"
 #include "nautilus-search-directory-file.h"
@@ -178,13 +177,8 @@ start_search (NautilusSearchDirectory *self)
     self->search_running = TRUE;
     self->search_ready_and_valid = FALSE;
 
-    /* Show hidden files in search if:
-     * 1. User preference "search-show-hidden-files" is enabled, OR
-     * 2. Current view has "Show Hidden Files" enabled (Ctrl+H) */
-    gboolean show_hidden = g_settings_get_boolean (nautilus_preferences,
-                                                   NAUTILUS_PREFERENCES_SEARCH_SHOW_HIDDEN_FILES);
     nautilus_query_set_show_hidden_files (self->query,
-                                          show_hidden || is_monitoring_hidden_files (self));
+                                          is_monitoring_hidden_files (self));
 
     reset_file_list (self);
     nautilus_search_engine_start (self->engine, self->query);
