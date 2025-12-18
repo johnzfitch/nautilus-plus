@@ -359,35 +359,3 @@ rubberband {
 .toolbar.no-bottom-padding {
   padding-bottom: 0px;
 }
-
-/* Location shadow - shows file path nested under filename at 60% opacity */
-.location-shadow {
-  opacity: 0.6;
-  font-size: 0.85em;
-  margin-top: -2px;
-}
-
-/* Search-cache status pill indicator */
-label.pill {
-  border-radius: 12px;
-  padding: 4px 10px;
-  /* Allow text to wrap and shrink when sidebar is narrow */
-  word-wrap: break-word;
-  overflow-wrap: break-word;
-  max-width: 100%;
-}
-
-label.pill.success {
-  background-color: alpha(@success_color, 0.15);
-  color: @success_color;
-}
-
-label.pill.error {
-  background-color: alpha(@error_color, 0.15);
-  color: @error_color;
-}
-
-/* Sidebar font size - increase for better readability */
-.sidebar-row .sidebar-label {
-  font-size: 1.15em;
-}

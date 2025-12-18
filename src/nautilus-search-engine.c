@@ -296,10 +296,8 @@ nautilus_search_engine_set_search_type (NautilusSearchEngine *self,
                     (CreateFunc) nautilus_search_engine_recent_new);
     setup_provider (self, &self->simple, NAUTILUS_SEARCH_TYPE_SIMPLE,
                     (CreateFunc) nautilus_search_engine_simple_new);
-
     setup_provider (self, &self->searchcache, NAUTILUS_SEARCH_TYPE_SEARCHCACHE,
                     (CreateFunc) nautilus_search_engine_searchcache_new);
-
 }
 
 static void
