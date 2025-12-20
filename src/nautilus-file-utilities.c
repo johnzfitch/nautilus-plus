@@ -1131,6 +1131,7 @@ refresh_fuse_mount_cache (void)
     g_list_free_full (cached_fuse_mounts, g_free);
     cached_fuse_mounts = NULL;
 
+    /* Read /proc/mounts */
     mounts = fopen ("/proc/mounts", "r");
     if (mounts == NULL)
     {
@@ -1140,12 +1141,14 @@ refresh_fuse_mount_cache (void)
 
     while (fgets (line, sizeof (line), mounts) != NULL)
     {
-        char mount_point[512];
-        char fs_type[64];
+        char fstype[256];
+        char mount_point[1024];
 
-        if (sscanf (line, "%*s %511s %63s", mount_point, fs_type) == 2)
+        /* Parse line: "device mount_point fstype options..." */
+        if (sscanf (line, "%*s %1023s %255s", mount_point, fstype) == 2)
         {
-            if (g_str_has_prefix (fs_type, "fuse"))
+            /* Check if it's a FUSE filesystem */
+            if (g_str_has_prefix (fstype, "fuse") || g_str_equal (fstype, "sshfs"))
             {
                 cached_fuse_mounts = g_list_prepend (cached_fuse_mounts,
                                                       g_strdup (mount_point));
@@ -1155,7 +1158,6 @@ refresh_fuse_mount_cache (void)
 
     fclose (mounts);
     fuse_mount_cache_time = now;
-
     g_mutex_unlock (&fuse_cache_mutex);
 }
 
@@ -1163,16 +1165,21 @@ refresh_fuse_mount_cache (void)
  * nautilus_file_is_on_fuse_mount:
  * @file: A #GFile to check
  *
- * Checks if the given file is located on a FUSE filesystem
- * (e.g., sshfs, gvfs-fuse, etc.). Uses a cached mount list for performance.
+ * Checks if the given file is on a FUSE filesystem by comparing its path
+ * against known FUSE mount points from /proc/mounts.
  *
- * Returns: %TRUE if on a FUSE mount, %FALSE otherwise
+ * Returns: %TRUE if the file is on a FUSE mount, %FALSE otherwise
  */
 gboolean
 nautilus_file_is_on_fuse_mount (GFile *file)
 {
     g_autofree char *path = NULL;
     gboolean result = FALSE;
+
+    if (file == NULL)
+    {
+        return FALSE;
+    }
 
     path = g_file_get_path (file);
     if (path == NULL)
