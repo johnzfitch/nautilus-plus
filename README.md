@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Nautilus-Plus
 
 Enhanced GNOME Files (Nautilus) with performance optimizations and extended features.
