@@ -1089,9 +1089,6 @@ is_external_volume (GVolume *volume)
     return is_external;
 }
 
-/* Stale mount detection for FUSE/SSHFS filesystems */
-/* Implementation moved to nautilus-file-utilities-fuse.c (Ref-Counted Sentinel design) */
-
 /* Cached FUSE mount list for performance (thread-safe) */
 static GList *cached_fuse_mounts = NULL;
 static gint64 fuse_mount_cache_time = 0;
