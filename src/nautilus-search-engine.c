@@ -106,7 +106,6 @@ search_engine_start_real (NautilusSearchEngine *self)
     search_engine_start_provider (self->model, self);
     search_engine_start_provider (self->recent, self);
     search_engine_start_provider (self->simple, self);
-    search_engine_start_provider (self->searchcache, self);
     self->starting = FALSE;
 
     /* Providers could already be finished */
@@ -159,10 +158,6 @@ nautilus_search_engine_stop (NautilusSearchEngine *self)
     if (self->simple != NULL)
     {
         nautilus_search_provider_stop (self->simple);
-    }
-    if (self->searchcache != NULL)
-    {
-        nautilus_search_provider_stop (self->searchcache);
     }
 
     self->restart = FALSE;
@@ -296,10 +291,8 @@ nautilus_search_engine_set_search_type (NautilusSearchEngine *self,
                     (CreateFunc) nautilus_search_engine_recent_new);
     setup_provider (self, &self->simple, NAUTILUS_SEARCH_TYPE_SIMPLE,
                     (CreateFunc) nautilus_search_engine_simple_new);
-
     setup_provider (self, &self->searchcache, NAUTILUS_SEARCH_TYPE_SEARCHCACHE,
                     (CreateFunc) nautilus_search_engine_searchcache_new);
-
 }
 
 static void
