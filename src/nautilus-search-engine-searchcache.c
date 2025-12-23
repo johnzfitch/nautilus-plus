@@ -32,6 +32,7 @@ struct _NautilusSearchEngineSearchCache
 
     gboolean query_pending;
     GQueue *hits_pending;
+    guint lazy_timeout_id;  /* Timeout source for lazy hit delivery */
 };
 
 static void nautilus_search_provider_init (NautilusSearchProviderInterface *iface);
@@ -42,13 +43,21 @@ G_DEFINE_TYPE_WITH_CODE (NautilusSearchEngineSearchCache,
                          G_IMPLEMENT_INTERFACE (NAUTILUS_TYPE_SEARCH_PROVIDER,
                                                 nautilus_search_provider_init))
 
-#define BATCH_SIZE 100
+#define BATCH_SIZE 50
+#define LAZY_BATCH_SIZE 50
 #define MAX_RESULTS 500
 
 static void
 finalize (GObject *object)
 {
     NautilusSearchEngineSearchCache *self = NAUTILUS_SEARCH_ENGINE_SEARCHCACHE (object);
+
+    /* Cancel pending timeout FIRST to prevent use-after-free */
+    if (self->lazy_timeout_id != 0)
+    {
+        g_source_remove (self->lazy_timeout_id);
+        self->lazy_timeout_id = 0;
+    }
 
     if (self->cancellable)
     {
@@ -63,6 +72,43 @@ finalize (GObject *object)
     G_OBJECT_CLASS (nautilus_search_engine_searchcache_parent_class)->finalize (object);
 }
 
+static gboolean
+lazy_send_hits_timeout (gpointer user_data)
+{
+    NautilusSearchEngineSearchCache *self = user_data;
+
+    if (g_queue_is_empty (self->hits_pending))
+    {
+        self->lazy_timeout_id = 0;  /* Clear ID when source removes itself */
+        return G_SOURCE_REMOVE;
+    }
+
+    NautilusSearchHit *hit;
+    g_autoptr (GPtrArray) hits = g_ptr_array_new_with_free_func (g_object_unref);
+
+    /* Send a small batch to avoid blocking the UI */
+    guint count = 0;
+    while ((hit = g_queue_pop_head (self->hits_pending)) && count < LAZY_BATCH_SIZE)
+    {
+        g_ptr_array_add (hits, hit);
+        count++;
+    }
+
+    if (hits->len > 0)
+    {
+        nautilus_search_provider_hits_added (NAUTILUS_SEARCH_PROVIDER (self),
+                                             g_steal_pointer (&hits));
+    }
+
+    /* Continue if more hits pending */
+    if (g_queue_is_empty (self->hits_pending))
+    {
+        self->lazy_timeout_id = 0;  /* Clear ID when source removes itself */
+        return G_SOURCE_REMOVE;
+    }
+    return G_SOURCE_CONTINUE;
+}
+
 static void
 check_pending_hits (NautilusSearchEngineSearchCache *self,
                     gboolean                         force_send)
@@ -70,6 +116,19 @@ check_pending_hits (NautilusSearchEngineSearchCache *self,
     if (!force_send &&
         g_queue_get_length (self->hits_pending) < BATCH_SIZE)
     {
+        return;
+    }
+
+    if (force_send)
+    {
+        /* Cancel any existing timeout before starting a new one */
+        if (self->lazy_timeout_id != 0)
+        {
+            g_source_remove (self->lazy_timeout_id);
+            self->lazy_timeout_id = 0;
+        }
+        /* Use timeout to lazily send remaining hits with delays to avoid blocking UI */
+        self->lazy_timeout_id = g_timeout_add (16, lazy_send_hits_timeout, self);  /* ~60fps */
         return;
     }
 
@@ -311,12 +370,23 @@ nautilus_search_engine_searchcache_stop (NautilusSearchProvider *provider)
 
     g_debug ("SearchCache engine stop");
 
+    /* Cancel pending timeout to prevent use-after-free */
+    if (self->lazy_timeout_id != 0)
+    {
+        g_source_remove (self->lazy_timeout_id);
+        self->lazy_timeout_id = 0;
+    }
+
     if (self->query_pending)
     {
         g_cancellable_cancel (self->cancellable);
         g_clear_object (&self->cancellable);
         self->query_pending = FALSE;
     }
+
+    /* Clean up pending hits that won't be delivered */
+    g_queue_foreach (self->hits_pending, (GFunc) g_object_unref, NULL);
+    g_queue_clear (self->hits_pending);
 
     /* Clean up subprocess to prevent zombies */
     g_clear_object (&self->subprocess);
