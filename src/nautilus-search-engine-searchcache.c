@@ -28,6 +28,7 @@ struct _NautilusSearchEngineSearchCache
 
     NautilusQuery *query;
     GCancellable *cancellable;
+    GSubprocess *subprocess;  /* Keep subprocess alive until async operation completes */
 
     gboolean query_pending;
     GQueue *hits_pending;
@@ -55,6 +56,7 @@ finalize (GObject *object)
         g_clear_object (&self->cancellable);
     }
 
+    g_clear_object (&self->subprocess);
     g_clear_object (&self->query);
     g_queue_free_full (self->hits_pending, g_object_unref);
 
@@ -133,15 +135,33 @@ process_search_results (NautilusSearchEngineSearchCache *self,
             continue;
         }
 
+        // Skip "No files found" message from sc command
+        if (g_str_has_prefix (line, "No files found"))
+        {
+            continue;
+        }
+
+        // Only process lines that look like absolute paths
+        if (line[0] != '/')
+        {
+            continue;
+        }
+
         // Create GFile from path and get URI
         g_autoptr (GFile) file = g_file_new_for_path (line);
         g_autofree gchar *uri = g_file_get_uri (file);
+        g_autofree gchar *basename = g_file_get_basename (file);
 
         // Create search hit with URI
         NautilusSearchHit *hit = nautilus_search_hit_new (uri);
 
-        // Set relevance (search-cache doesn't provide scoring, use fixed value)
-        nautilus_search_hit_set_fts_rank (hit, 0.5);
+        // Compute match score based on filename (prefix matches rank higher)
+        gdouble match = nautilus_query_matches_string (self->query, basename);
+        if (match < 0)
+        {
+            match = 0.5;  // Fallback if no match computed
+        }
+        nautilus_search_hit_set_fts_rank (hit, match);
 
         // Add to pending hits
         g_queue_push_tail (self->hits_pending, hit);
@@ -173,6 +193,7 @@ search_callback (GObject      *source_object,
     {
         // FALLBACK: On communication error, silently finish (let other engines work)
         g_debug ("SearchCache engine: communication failed, falling back silently");
+        g_clear_object (&self->subprocess);  /* Reap the subprocess */
         search_finished (self, NULL);
         return;
     }
@@ -185,6 +206,7 @@ search_callback (GObject      *source_object,
         // Don't report error to user - other search engines (simple, tracker) will provide results
         g_debug ("SearchCache engine: sc exited with status %d, falling back: %s",
                  exit_status, stderr_str ? stderr_str : "");
+        g_clear_object (&self->subprocess);  /* Reap the subprocess */
         search_finished (self, NULL);
         return;
     }
@@ -194,6 +216,7 @@ search_callback (GObject      *source_object,
         process_search_results (self, stdout_str);
     }
 
+    g_clear_object (&self->subprocess);  /* Reap the subprocess */
     search_finished (self, NULL);
 }
 
@@ -210,13 +233,14 @@ search_engine_searchcache_start (NautilusSearchProvider *provider,
         g_debug ("SearchCache engine already running, cancelling");
         g_cancellable_cancel (self->cancellable);
         g_clear_object (&self->cancellable);
+        g_clear_object (&self->subprocess);  /* Clean up old subprocess */
     }
 
     g_clear_object (&self->query);
     self->query = g_object_ref (query);
     self->cancellable = g_cancellable_new ();
 
-    const gchar *search_text = nautilus_query_get_text (query);
+    g_autofree gchar *search_text = nautilus_query_get_text (query);
 
     if (search_text == NULL || search_text[0] == '\0')
     {
@@ -241,15 +265,6 @@ search_engine_searchcache_start (NautilusSearchProvider *provider,
     g_autoptr (GSubprocessLauncher) launcher = g_subprocess_launcher_new (
         G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE);
 
-    // Get location filter if any
-    GFile *location = nautilus_query_get_location (query);
-    const gchar *location_path = NULL;
-
-    if (location != NULL)
-    {
-        location_path = g_file_get_path (location);
-    }
-
     // Launch subprocess with result limit - use query limit if set, otherwise use preferences
     guint query_limit = nautilus_query_get_max_results (self->query);
     guint result_limit = (query_limit > 0) ? query_limit :
@@ -257,27 +272,15 @@ search_engine_searchcache_start (NautilusSearchProvider *provider,
     g_autofree gchar *limit_str = g_strdup_printf ("%u", result_limit);
     GSubprocess *subprocess;
 
-    // Launch sc with path filtering if location is specified
-    if (location_path != NULL)
-    {
-        subprocess = g_subprocess_launcher_spawn (launcher, &error,
-                                                  "sc",
-                                                  "--full-path",
-                                                  "--limit", limit_str,
-                                                  "--path", location_path,
-                                                  search_text,
-                                                  NULL);
-    }
-    else
-    {
-        // Global search (no path filter)
-        subprocess = g_subprocess_launcher_spawn (launcher, &error,
-                                                  "sc",
-                                                  "--full-path",
-                                                  "--limit", limit_str,
-                                                  search_text,
-                                                  NULL);
-    }
+    // Always search globally - proximity bonus in relevance scoring will rank
+    // results closer to the search location higher
+    // Use daemon mode for better performance (scd keeps index in memory)
+    subprocess = g_subprocess_launcher_spawn (launcher, &error,
+                                              "sc",
+                                              "--full-path",
+                                              "--limit", limit_str,
+                                              search_text,
+                                              NULL);
 
     if (subprocess == NULL)
     {
@@ -288,14 +291,15 @@ search_engine_searchcache_start (NautilusSearchProvider *provider,
 
     self->query_pending = TRUE;
 
+    // Store subprocess reference to prevent zombies and ensure proper cleanup
+    self->subprocess = subprocess;
+
     // Communicate asynchronously
     g_subprocess_communicate_utf8_async (subprocess,
                                          NULL,
                                          self->cancellable,
                                          search_callback,
                                          self);
-
-    g_object_unref (subprocess);
 
     return TRUE;
 }
@@ -313,6 +317,9 @@ nautilus_search_engine_searchcache_stop (NautilusSearchProvider *provider)
         g_clear_object (&self->cancellable);
         self->query_pending = FALSE;
     }
+
+    /* Clean up subprocess to prevent zombies */
+    g_clear_object (&self->subprocess);
 }
 
 static void

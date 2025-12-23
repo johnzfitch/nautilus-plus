@@ -431,7 +431,9 @@ visit_directory (GFile            *dir,
                 data->results_truncated = TRUE;
                 g_debug ("Simple engine: reached result limit (%u), stopping", data->max_results);
 
-                /* child, info, and enumerator are g_autoptr - they cleanup automatically */
+                g_object_unref (child);
+                g_object_unref (info);
+                g_object_unref (enumerator);
 
                 /* Clear remaining directories to stop the search */
                 g_queue_foreach (data->directories, (GFunc) g_object_unref, NULL);
