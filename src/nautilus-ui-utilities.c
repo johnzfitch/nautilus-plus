@@ -339,23 +339,42 @@ nautilus_date_time_is_between_dates (GDateTime *date,
     return in_between;
 }
 
-AdwMessageDialog *
-show_dialog (const gchar    *primary_text,
-             const gchar    *secondary_text,
-             GtkWindow      *parent,
-             GtkMessageType  type)
+static void
+show_ok_dialog_idle (gpointer user_data)
 {
-    GtkWidget *dialog;
+    AdwDialog *dialog = user_data;
+    GtkWidget *parent = g_object_get_data (G_OBJECT (dialog), "parent-widget");
 
-    g_return_val_if_fail (parent != NULL, NULL);
+    adw_dialog_present (dialog, parent);
+}
 
-    dialog = adw_message_dialog_new (parent, primary_text, secondary_text);
-    adw_message_dialog_add_response (ADW_MESSAGE_DIALOG (dialog), "ok", _("_OK"));
-    adw_message_dialog_set_default_response (ADW_MESSAGE_DIALOG (dialog), "ok");
+void
+nautilus_show_ok_dialog (const char *heading,
+                         const char *body,
+                         GtkWidget  *parent)
+{
+    AdwAlertDialog *dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new (heading, body));
 
-    gtk_window_present (GTK_WINDOW (dialog));
+    adw_alert_dialog_add_response (dialog, "ok", _("_OK"));
+    adw_alert_dialog_set_default_response (dialog, "ok");
 
-    return ADW_MESSAGE_DIALOG (dialog);
+    if (parent == NULL)
+    {
+        GtkApplication *app = GTK_APPLICATION (g_application_get_default ());
+
+        parent = GTK_WIDGET (gtk_application_get_active_window (app));
+    }
+
+    if (g_main_context_is_owner (g_main_context_default ()))
+    {
+        adw_dialog_present (ADW_DIALOG (dialog), parent);
+    }
+    else
+    {
+        g_object_set_data (G_OBJECT (dialog), "parent-widget", parent);
+
+        g_idle_add_once (show_ok_dialog_idle, dialog);
+    }
 }
 
 static void

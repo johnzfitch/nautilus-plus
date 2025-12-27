@@ -23,12 +23,10 @@
 #include <config.h>
 #include "nautilus-search-engine-simple.h"
 
-#include "nautilus-global-preferences.h"
 #include "nautilus-query.h"
 #include "nautilus-search-hit.h"
 #include "nautilus-search-provider.h"
 #include "nautilus-ui-utilities.h"
-#include "nautilus-file-utilities.h"
 
 #include <string.h>
 #include <glib.h>
@@ -36,7 +34,6 @@
 
 #define BATCH_SIZE 500
 #define CREATE_THREAD_DELAY_MS 500
-#define FUSE_MOUNT_CHECK_TIMEOUT_MS 1000
 
 typedef struct
 {
@@ -49,11 +46,6 @@ typedef struct
 
     gint n_processed_files;
     GPtrArray *hits;
-
-    /* Result limiting to prevent resource exhaustion */
-    guint total_hits;
-    guint max_results;
-    gboolean results_truncated;
 
     NautilusQuery *query;
     gint processing_id;
@@ -108,20 +100,6 @@ search_thread_data_new (NautilusSearchEngineSimple *engine,
 
     data->cancellable = g_cancellable_new ();
 
-    /* Initialize result limiting - use query limit if set, otherwise GSettings */
-    data->total_hits = 0;
-    data->results_truncated = FALSE;
-    guint query_limit = nautilus_query_get_max_results (query);
-    if (query_limit > 0)
-    {
-        data->max_results = query_limit;
-    }
-    else
-    {
-        data->max_results = g_settings_get_uint (nautilus_preferences,
-                                                 NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT);
-    }
-
     g_mutex_init (&data->idle_mutex);
     data->idle_queue = g_queue_new ();
 
@@ -152,14 +130,9 @@ search_thread_done (SearchThreadData *data)
     {
         g_debug ("Simple engine finished and cancelled");
     }
-    else if (data->results_truncated)
-    {
-        g_debug ("Simple engine finished with truncated results (%u shown, limit %u)",
-                 data->total_hits, data->max_results);
-    }
     else
     {
-        g_debug ("Simple engine finished correctly with %u results", data->total_hits);
+        g_debug ("Simple engine finished");
     }
     engine->active_search = NULL;
     nautilus_search_provider_finished (NAUTILUS_SEARCH_PROVIDER (engine));
@@ -301,18 +274,6 @@ visit_directory (GFile            *dir,
     const char *attributes = nautilus_query_has_mime_types (data->query)
                              ? STD_ATTRIBUTES_WITH_CONTENT_TYPE : STD_ATTRIBUTES;
 
-    /* Check for stale FUSE mounts before attempting enumeration.
-     * This prevents hanging indefinitely on disconnected SSHFS mounts. */
-    if (nautilus_file_is_on_fuse_mount (dir))
-    {
-        if (!nautilus_file_check_fuse_mount_responsive (dir, FUSE_MOUNT_CHECK_TIMEOUT_MS))
-        {
-            g_autofree char *dir_path = g_file_get_path (dir);
-            g_debug ("Skipping unresponsive FUSE mount: %s", dir_path);
-            return;
-        }
-    }
-
     g_autoptr (GFileEnumerator) enumerator = g_file_enumerate_children (
         dir,
         attributes,
@@ -422,24 +383,6 @@ visit_directory (GFile            *dir,
             }
 
             g_ptr_array_add (data->hits, hit);
-
-            data->total_hits++;
-
-            /* Check if we've hit the result limit */
-            if (data->max_results > 0 && data->total_hits >= data->max_results)
-            {
-                data->results_truncated = TRUE;
-                g_debug ("Simple engine: reached result limit (%u), stopping", data->max_results);
-
-                g_object_unref (child);
-                g_object_unref (info);
-                g_object_unref (enumerator);
-
-                /* Clear remaining directories to stop the search */
-                g_queue_foreach (data->directories, (GFunc) g_object_unref, NULL);
-                g_queue_clear (data->directories);
-                return;
-            }
         }
 
         data->n_processed_files++;
