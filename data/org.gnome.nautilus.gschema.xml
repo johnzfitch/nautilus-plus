@@ -68,13 +68,6 @@
     <value value="3" nick="encrypted_zip"/>
   </enum>
 
-  <enum id="org.gnome.nautilus.AnimatedThumbnailMode">
-    <value value="0" nick="never"/>
-    <value value="1" nick="on-hover"/>
-    <value value="2" nick="on-select"/>
-    <value value="3" nick="always"/>
-  </enum>
-
   <schema path="/org/gnome/nautilus/" id="org.gnome.nautilus" gettext-domain="nautilus">
     <child schema="org.gnome.nautilus.preferences" name="preferences"/>
     <child schema="org.gnome.nautilus.compression" name="compression"/>
@@ -120,11 +113,6 @@
       <summary>Type of click used to launch/open files</summary>
       <description>Possible values are “single” to launch files on a single click, or “double” to launch them on a double click.</description>
     </key>
-    <key type="b" name="install-mime-activation">
-      <default>true</default>
-      <summary>Show the package installer for unknown MIME types</summary>
-      <description>Whether to show the user a package installer dialog in case an unknown MIME type is opened, in order to search for an app to handle it.</description>
-    </key>
     <key type="b" name="mouse-use-extra-buttons">
       <default>true</default>
       <summary>Use extra mouse button events in Files</summary>
@@ -144,12 +132,7 @@
       <aliases><alias value='local_only' target='local-only'/></aliases>
       <default>'local-only'</default>
       <summary>When to show thumbnails of files</summary>
-      <description>Speed trade-off for when to show a file as a thumbnail. If set to "always" then always thumbnail, even if the folder is on a remote server. If set to "local-only" then only show thumbnails for local file systems. If set to "never" then never bother to thumbnail files, just use a generic icon. Despite what the name may suggest, this applies to any previewable file type.</description>
-    </key>
-    <key name="animated-thumbnails" enum="org.gnome.nautilus.AnimatedThumbnailMode">
-      <default>'on-select'</default>
-      <summary>When to play animated thumbnails</summary>
-      <description>Controls when animated thumbnails (WebP, GIF, APNG) should be played. Options are "never" (show static frame only), "on-hover" (play when mouse hovers over), "on-select" (play when file is selected), or "always" (always play animations).</description>
+      <description>Speed trade-off for when to show a file as a thumbnail. If set to “always” then always thumbnail, even if the folder is on a remote server. If set to “local-only” then only show thumbnails for local file systems. If set to “never” then never bother to thumbnail files, just use a generic icon. Despite what the name may suggest, this applies to any previewable file type.</description>
     </key>
     <key type="t" name="thumbnail-limit">
       <default>50</default>
@@ -199,16 +182,6 @@
       <default>true</default>
       <summary>Whether to have full text search enabled by default when opening a new window/tab</summary>
       <description>If set to true, Files will also match the file contents besides the name. This toggles the default active state, which can still be overridden in the search popover</description>
-    </key>
-    <key type="u" name="search-results-limit">
-      <default>1000</default>
-      <summary>Maximum search results per provider</summary>
-      <description>Maximum number of search results returned from each search provider. Lower values improve performance and stability. Set to 0 for unlimited (not recommended for large indexed directories).</description>
-    </key>
-    <key type="b" name="search-show-hidden-files">
-      <default>true</default>
-      <summary>Show hidden files in search results</summary>
-      <description>If set to true, search results will include hidden files (files starting with a dot). If false, hidden files will only appear in search when the current view has "Show Hidden Files" enabled (Ctrl+H).</description>
     </key>
     <key name="date-time-format" enum="org.gnome.nautilus.DateTimeFormat">
       <default>'simple'</default>
@@ -279,8 +252,8 @@
     </key>
     <key type="(ii)" name="initial-size-file-chooser">
       <default>(890,550)</default>
-      <summary>Initial size of the window</summary>
-      <description>A tuple containing the initial width and height of the app window.</description>
+      <summary>Initial size of the file chooser window</summary>
+      <description>A tuple containing the initial width and height of the file chooser window.</description>
     </key>
   </schema>
 </schemalist>
