@@ -40,8 +40,6 @@
 #include <gio/gio.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <sys/stat.h>
-#include <stdio.h>
 
 #define NAUTILUS_USER_DIRECTORY_NAME "nautilus"
 #define DEFAULT_NAUTILUS_DIRECTORY_MODE (0755)
@@ -574,10 +572,9 @@ nautilus_restore_files_from_trash (GList     *files,
         g_autofree char *message = g_strdup_printf (_("Could not determine original location of “%s” "),
                                                     nautilus_file_get_display_name (file));
 
-        show_dialog (message,
-                     _("The item cannot be restored from trash"),
-                     parent_window,
-                     GTK_MESSAGE_WARNING);
+        nautilus_show_ok_dialog (message,
+                                 _("The item cannot be restored from trash"),
+                                 GTK_WIDGET (parent_window));
     }
 
     if (original_dirs_hash != NULL)
@@ -1087,119 +1084,4 @@ is_external_volume (GVolume *volume)
     g_free (id);
 
     return is_external;
-}
-
-/* Stale mount detection for FUSE/SSHFS filesystems */
-/* Implementation moved to nautilus-file-utilities-fuse.c (Ref-Counted Sentinel design) */
-
-/* Cached FUSE mount list for performance (thread-safe) */
-static GList *cached_fuse_mounts = NULL;
-static gint64 fuse_mount_cache_time = 0;
-static GMutex fuse_cache_mutex;
-static gboolean fuse_cache_initialized = FALSE;
-#define FUSE_MOUNT_CACHE_TTL_MS 5000  /* Cache for 5 seconds */
-
-static void
-ensure_fuse_cache_initialized (void)
-{
-    if (!fuse_cache_initialized)
-    {
-        g_mutex_init (&fuse_cache_mutex);
-        fuse_cache_initialized = TRUE;
-    }
-}
-
-static void
-refresh_fuse_mount_cache (void)
-{
-    FILE *mounts;
-    char line[1024];
-    gint64 now = g_get_monotonic_time () / 1000;
-
-    ensure_fuse_cache_initialized ();
-    g_mutex_lock (&fuse_cache_mutex);
-
-    /* Check if cache is still valid */
-    if (cached_fuse_mounts != NULL &&
-        (now - fuse_mount_cache_time) < FUSE_MOUNT_CACHE_TTL_MS)
-    {
-        g_mutex_unlock (&fuse_cache_mutex);
-        return;
-    }
-
-    /* Clear old cache */
-    g_list_free_full (cached_fuse_mounts, g_free);
-    cached_fuse_mounts = NULL;
-
-    mounts = fopen ("/proc/mounts", "r");
-    if (mounts == NULL)
-    {
-        g_mutex_unlock (&fuse_cache_mutex);
-        return;
-    }
-
-    while (fgets (line, sizeof (line), mounts) != NULL)
-    {
-        char mount_point[512];
-        char fs_type[64];
-
-        if (sscanf (line, "%*s %511s %63s", mount_point, fs_type) == 2)
-        {
-            if (g_str_has_prefix (fs_type, "fuse"))
-            {
-                cached_fuse_mounts = g_list_prepend (cached_fuse_mounts,
-                                                      g_strdup (mount_point));
-            }
-        }
-    }
-
-    fclose (mounts);
-    fuse_mount_cache_time = now;
-
-    g_mutex_unlock (&fuse_cache_mutex);
-}
-
-/**
- * nautilus_file_is_on_fuse_mount:
- * @file: A #GFile to check
- *
- * Checks if the given file is located on a FUSE filesystem
- * (e.g., sshfs, gvfs-fuse, etc.). Uses a cached mount list for performance.
- *
- * Returns: %TRUE if on a FUSE mount, %FALSE otherwise
- */
-gboolean
-nautilus_file_is_on_fuse_mount (GFile *file)
-{
-    g_autofree char *path = NULL;
-    gboolean result = FALSE;
-
-    path = g_file_get_path (file);
-    if (path == NULL)
-    {
-        return FALSE;
-    }
-
-    refresh_fuse_mount_cache ();
-
-    /* Lock for reading the cache */
-    ensure_fuse_cache_initialized ();
-    g_mutex_lock (&fuse_cache_mutex);
-
-    for (GList *l = cached_fuse_mounts; l != NULL; l = l->next)
-    {
-        const char *mount_point = l->data;
-        size_t len = strlen (mount_point);
-
-        if (g_str_has_prefix (path, mount_point) &&
-            (path[len] == '/' || path[len] == '\0'))
-        {
-            result = TRUE;
-            break;
-        }
-    }
-
-    g_mutex_unlock (&fuse_cache_mutex);
-
-    return result;
 }

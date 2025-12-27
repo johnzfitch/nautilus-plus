@@ -45,6 +45,7 @@
 #include <gio/gio.h>
 #include <glib.h>
 
+#include "nautilus-dialog-utilities.h"
 #include "nautilus-error-reporting.h"
 #include "nautilus-fd-holder.h"
 #include "nautilus-file-changes-queue.h"
@@ -271,36 +272,13 @@ G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC (SourceInfo, source_info_clear)
 
 #define IS_IO_ERROR(__error, KIND) (((__error)->domain == G_IO_ERROR && (__error)->code == G_IO_ERROR_ ## KIND))
 
-#define CANCEL _("_Cancel")
-#define SKIP _("_Skip")
-#define SKIP_ALL _("S_kip All")
-#define RETRY _("_Retry")
-#define DELETE _("_Delete")
-#define DELETE_ALL _("Delete _All")
-#define REPLACE _("_Replace")
-#define REPLACE_ALL _("Replace _All")
-#define MERGE _("_Merge")
-#define MERGE_ALL _("Merge _All")
-#define COPY_FORCE _("Copy _Anyway")
-#define FORCE_OPERATION _("Proceed _Anyway")
-#define EMPTY_TRASH _("Empty _Trash")
-
-static gboolean
-is_all_button_text (const char *button_text)
-{
-    g_assert (button_text != NULL);
-
-    return !strcmp (button_text, SKIP_ALL) ||
-           !strcmp (button_text, REPLACE_ALL) ||
-           !strcmp (button_text, DELETE_ALL) ||
-           !strcmp (button_text, MERGE_ALL);
-}
-
 static void scan_sources (GList      *files,
                           SourceInfo *source_info,
                           CommonJob  *job,
                           OpKind      kind);
 
+static void
+abort_job (CommonJob *job);
 
 static void empty_trash_thread_func (GTask        *task,
                                      gpointer      source_object,
@@ -686,23 +664,23 @@ can_delete_files_without_confirm (GList *files)
 
 typedef struct
 {
-    GtkWindow **parent_window;
+    GtkWindow *parent_window;
     NautilusFileOperationsDBusData *dbus_data;
-    GtkMessageType message_type;
-    const char *primary_text;
-    const char *secondary_text;
-    const char *details_text;
-    const char **button_titles;
-    gboolean show_all;
-    gboolean should_start_inactive;
-    int result;
+
+    const char *heading;
+    const char *body;
+    const char *details;
+    NautilusDialogResponse responses;
+    gboolean delay_interactivity;
+
+    NautilusDialogResponse result;
     /* Dialogs are ran from operation threads, which need to be blocked until
      * the user gives a valid response
      */
     gboolean completed;
     GMutex mutex;
     GCond cond;
-} RunSimpleDialogData;
+} DialogWithResponsesData;
 
 static void
 set_transient_for (GdkSurface *child_surface,
@@ -769,23 +747,14 @@ is_long_job (CommonJob *job)
     return elapsed > LONG_JOB_THRESHOLD_IN_SECONDS ? TRUE : FALSE;
 }
 
-static gboolean
-simple_dialog_button_activate (GtkWidget *button)
-{
-    gtk_widget_set_sensitive (button, TRUE);
-    return G_SOURCE_REMOVE;
-}
-
 static void
-simple_dialog_cb (GtkDialog *dialog,
-                  gint       response_id,
-                  gpointer   user_data)
+simple_dialog_cb (AdwAlertDialog          *dialog,
+                  GAsyncResult            *result,
+                  DialogWithResponsesData *data)
 {
-    RunSimpleDialogData *data = user_data;
+    const char *response = adw_alert_dialog_choose_finish (dialog, result);
 
-    gtk_window_destroy (GTK_WINDOW (dialog));
-
-    data->result = response_id;
+    data->result = nautilus_dialog_response_from_string (response);
     data->completed = TRUE;
 
     g_cond_signal (&data->cond);
@@ -795,96 +764,30 @@ simple_dialog_cb (GtkDialog *dialog,
 static gboolean
 do_run_simple_dialog (gpointer _data)
 {
-    RunSimpleDialogData *data = _data;
-    const char *button_title;
-    GtkWidget *dialog;
-    GtkWidget *button;
-    int response_id;
+    DialogWithResponsesData *data = _data;
 
     g_mutex_lock (&data->mutex);
 
     /* Create the dialog. */
-    dialog = gtk_message_dialog_new (*data->parent_window,
-                                     GTK_DIALOG_MODAL,
-                                     data->message_type,
-                                     GTK_BUTTONS_NONE,
-                                     NULL);
-
-    g_object_set (dialog,
-                  "text", data->primary_text,
-                  "secondary-text", data->secondary_text,
-                  NULL);
-
-    for (response_id = 0;
-         data->button_titles[response_id] != NULL;
-         response_id++)
-    {
-        button_title = data->button_titles[response_id];
-        if (!data->show_all && is_all_button_text (button_title))
-        {
-            continue;
-        }
-
-        button = gtk_dialog_add_button (GTK_DIALOG (dialog), button_title, response_id);
-        gtk_dialog_set_default_response (GTK_DIALOG (dialog), response_id);
-
-        if (g_strcmp0 (button_title, DELETE) == 0 ||
-            g_strcmp0 (button_title, EMPTY_TRASH) == 0 ||
-            g_strcmp0 (button_title, DELETE_ALL) == 0)
-        {
-            gtk_widget_add_css_class (button, "destructive-action");
-        }
-
-        if (data->should_start_inactive)
-        {
-            gtk_widget_set_sensitive (button, FALSE);
-            g_timeout_add_seconds (BUTTON_ACTIVATION_DELAY_IN_SECONDS,
-                                   G_SOURCE_FUNC (simple_dialog_button_activate),
-                                   button);
-        }
-    }
-
-    if (data->details_text)
-    {
-        GtkWidget *content_area, *label;
-        content_area = gtk_message_dialog_get_message_area (GTK_MESSAGE_DIALOG (dialog));
-
-        label = gtk_label_new (data->details_text);
-        gtk_label_set_wrap (GTK_LABEL (label), TRUE);
-        gtk_label_set_selectable (GTK_LABEL (label), TRUE);
-        gtk_label_set_xalign (GTK_LABEL (label), 0);
-        /* Ideally, we shouldn’t do this.
-         *
-         * Refer to https://gitlab.gnome.org/GNOME/nautilus/merge_requests/94
-         * and https://gitlab.gnome.org/GNOME/nautilus/issues/270.
-         */
-        gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_MIDDLE);
-        gtk_label_set_max_width_chars (GTK_LABEL (label),
-                                       MAXIMUM_DISPLAYED_ERROR_MESSAGE_LENGTH);
-
-        gtk_box_append (GTK_BOX (content_area), label);
-    }
+    AdwAlertDialog *dialog = nautilus_dialog_with_responses (data->heading,
+                                                             data->body,
+                                                             data->details,
+                                                             data->delay_interactivity,
+                                                             data->responses);
 
     if (data->dbus_data != NULL)
     {
-        guint32 timestamp;
-
-        timestamp = nautilus_file_operations_dbus_data_get_timestamp (data->dbus_data);
-
         if (nautilus_file_operations_dbus_data_get_parent_handle (data->dbus_data) != NULL)
         {
             g_signal_connect (dialog, "realize", G_CALLBACK (dialog_realize_cb), data->dbus_data);
         }
-
-        if (timestamp != 0)
-        {
-            gtk_window_present_with_time (GTK_WINDOW (dialog), timestamp);
-        }
     }
 
-    /* Run it. */
-    g_signal_connect (dialog, "response", G_CALLBACK (simple_dialog_cb), data);
-    gtk_window_present (GTK_WINDOW (dialog));
+    adw_alert_dialog_choose (dialog,
+                             GTK_WIDGET (data->parent_window),
+                             NULL,
+                             (GAsyncReadyCallback) simple_dialog_cb,
+                             data);
 
     return FALSE;
 }
@@ -892,45 +795,30 @@ do_run_simple_dialog (gpointer _data)
 /* NOTE: This frees the primary / secondary strings, in order to
  *  avoid doing that everywhere. So, make sure they are strduped */
 
-static int
-run_simple_dialog_va (CommonJob      *job,
-                      GtkMessageType  message_type,
-                      char           *primary_text,
-                      char           *secondary_text,
-                      const char     *details_text,
-                      gboolean        show_all,
-                      va_list         varargs)
+static NautilusDialogResponse
+run_dialog (CommonJob              *job,
+            const char             *heading,
+            const char             *body,
+            const char             *details,
+            NautilusDialogResponse  responses)
 {
-    RunSimpleDialogData *data;
-    int res;
-    const char *button_title;
-    GPtrArray *ptr_array;
-
     g_timer_stop (job->time);
 
-    data = g_new0 (RunSimpleDialogData, 1);
-    data->parent_window = &job->parent_window;
-    data->dbus_data = job->dbus_data;
-    data->message_type = message_type;
-    data->primary_text = primary_text;
-    data->secondary_text = secondary_text;
-    data->details_text = details_text;
-    data->show_all = show_all;
-    data->completed = FALSE;
+    DialogWithResponsesData *data = &(DialogWithResponsesData)
+    {
+        .parent_window = job->parent_window,
+        .dbus_data = job->dbus_data,
+        .heading = heading,
+        .body = body,
+        .details = details,
+        .responses = responses,
+        .delay_interactivity = is_long_job (job),
+        .completed = FALSE
+    };
     g_mutex_init (&data->mutex);
     g_cond_init (&data->cond);
 
-    ptr_array = g_ptr_array_new ();
-    while ((button_title = va_arg (varargs, const char *)) != NULL)
-    {
-        g_ptr_array_add (ptr_array, (char *) button_title);
-    }
-    g_ptr_array_add (ptr_array, NULL);
-    data->button_titles = (const char **) g_ptr_array_free (ptr_array, FALSE);
-
     nautilus_progress_info_pause (job->progress);
-
-    data->should_start_inactive = is_long_job (job);
 
     g_mutex_lock (&data->mutex);
 
@@ -944,148 +832,59 @@ run_simple_dialog_va (CommonJob      *job,
     }
 
     nautilus_progress_info_resume (job->progress);
-    res = data->result;
 
     g_mutex_unlock (&data->mutex);
     g_mutex_clear (&data->mutex);
     g_cond_clear (&data->cond);
 
-    g_free (data->button_titles);
-    g_free (data);
-
     g_timer_continue (job->time);
 
-    g_free (primary_text);
-    g_free (secondary_text);
-
-    return res;
+    return data->result;
 }
 
-#if 0 /* Not used at the moment */
-static int
-run_simple_dialog (CommonJob     *job,
-                   GtkMessageType message_type,
-                   char          *primary_text,
-                   char          *secondary_text,
-                   const char    *details_text,
-                   ...)
+/** Returns: Whether skip was chosen. */
+static gboolean
+show_skip_dialog (CommonJob  *job,
+                  const char *heading,
+                  const char *body,
+                  const char *details,
+                  int         total_operations,
+                  gboolean    show_all)
 {
-    va_list varargs;
-    int res;
+    NautilusDialogResponse responses = RESPONSE_CANCEL;
 
-    va_start (varargs, details_text);
-    res = run_simple_dialog_va (job,
-                                message_type,
-                                primary_text,
-                                secondary_text,
-                                details_text,
-                                varargs);
-    va_end (varargs);
-    return res;
-}
-#endif
-
-static int
-run_error (CommonJob  *job,
-           char       *primary_text,
-           char       *secondary_text,
-           const char *details_text,
-           gboolean    show_all,
-           ...)
-{
-    va_list varargs;
-    int res;
-
-    va_start (varargs, show_all);
-    res = run_simple_dialog_va (job,
-                                GTK_MESSAGE_ERROR,
-                                primary_text,
-                                secondary_text,
-                                details_text,
-                                show_all,
-                                varargs);
-    va_end (varargs);
-    return res;
-}
-
-static int
-run_warning (CommonJob  *job,
-             char       *primary_text,
-             char       *secondary_text,
-             const char *details_text,
-             gboolean    show_all,
-             ...)
-{
-    va_list varargs;
-    int res;
-
-    va_start (varargs, show_all);
-    res = run_simple_dialog_va (job,
-                                GTK_MESSAGE_WARNING,
-                                primary_text,
-                                secondary_text,
-                                details_text,
-                                show_all,
-                                varargs);
-    va_end (varargs);
-    return res;
-}
-
-static int
-run_question (CommonJob  *job,
-              char       *primary_text,
-              char       *secondary_text,
-              const char *details_text,
-              gboolean    show_all,
-              ...)
-{
-    va_list varargs;
-    int res;
-
-    va_start (varargs, show_all);
-    res = run_simple_dialog_va (job,
-                                GTK_MESSAGE_QUESTION,
-                                primary_text,
-                                secondary_text,
-                                details_text,
-                                show_all,
-                                varargs);
-    va_end (varargs);
-    return res;
-}
-
-static int
-run_cancel_or_skip_warning (CommonJob  *job,
-                            char       *primary_text,
-                            char       *secondary_text,
-                            const char *details_text,
-                            int         total_operations,
-                            int         operations_remaining)
-{
-    int response;
-
-    if (total_operations == 1)
+    if (total_operations > 1)
     {
-        response = run_warning (job,
-                                primary_text,
-                                secondary_text,
-                                details_text,
-                                FALSE,
-                                CANCEL,
-                                NULL);
+        responses |= (show_all
+                      ? (RESPONSE_SKIP | RESPONSE_SKIP_ALL)
+                      : RESPONSE_SKIP);
+    }
+
+    NautilusDialogResponse response = run_dialog (job,
+                                                  heading,
+                                                  body,
+                                                  details,
+                                                  responses);
+
+    if (response == RESPONSE_CANCEL)
+    {
+        abort_job (job);
+        return FALSE;
+    }
+    else if (response == RESPONSE_SKIP_ALL)
+    {
+        job->skip_all_error = TRUE;
+        return TRUE;
+    }
+    else if (response == RESPONSE_SKIP)
+    {
+        return TRUE;
     }
     else
     {
-        response = run_warning (job,
-                                primary_text,
-                                secondary_text,
-                                details_text,
-                                operations_remaining > 1,
-                                CANCEL, SKIP_ALL, SKIP,
-                                NULL);
+        g_assert_not_reached ();
+        return FALSE;
     }
-
-    return response;
 }
 
 static void
@@ -1129,7 +928,7 @@ static gboolean
 confirm_delete_from_trash (CommonJob *job,
                            GList     *files)
 {
-    char *prompt;
+    g_autofree char *prompt = NULL;
     int file_count;
     int response;
 
@@ -1151,41 +950,32 @@ confirm_delete_from_trash (CommonJob *job,
                                   file_count);
     }
 
-    response = run_warning (job,
-                            prompt,
-                            g_strdup (_("Permanently deleted items can not be restored")),
-                            NULL,
-                            FALSE,
-                            CANCEL, DELETE,
-                            NULL);
+    response = run_dialog (job,
+                           prompt,
+                           _("Permanently deleted items can not be restored"),
+                           NULL,
+                           RESPONSE_DELETE);
 
-    return (response == 1);
+    return response == RESPONSE_DELETE;
 }
 
 static gboolean
 confirm_empty_trash (CommonJob *job)
 {
-    char *prompt;
-    int response;
+    int response = run_dialog (job,
+                               _("Empty Trash?"),
+                               _("All items in the Trash will be permanently deleted"),
+                               NULL,
+                               RESPONSE_EMPTY_TRASH);
 
-    prompt = g_strdup (_("Empty Trash?"));
-
-    response = run_warning (job,
-                            prompt,
-                            g_strdup (_("All items in the Trash will be permanently deleted")),
-                            NULL,
-                            FALSE,
-                            CANCEL, EMPTY_TRASH,
-                            NULL);
-
-    return (response == 1);
+    return response == RESPONSE_EMPTY_TRASH;
 }
 
 static gboolean
 confirm_delete_directly (CommonJob *job,
                          GList     *files)
 {
-    char *prompt;
+    g_autofree char *prompt = NULL;
     int file_count;
     int response;
 
@@ -1213,15 +1003,13 @@ confirm_delete_directly (CommonJob *job,
                                   file_count);
     }
 
-    response = run_warning (job,
-                            prompt,
-                            g_strdup (_("Permanently deleted items can not be restored")),
-                            NULL,
-                            FALSE,
-                            CANCEL, DELETE,
-                            NULL);
+    response = run_dialog (job,
+                           prompt,
+                           _("Permanently deleted items can not be restored"),
+                           NULL,
+                           RESPONSE_DELETE);
 
-    return response == 1;
+    return response == RESPONSE_DELETE;
 }
 
 #pragma GCC diagnostic push
@@ -1528,10 +1316,9 @@ file_deleted_callback (GFile    *file,
     CommonJob *job;
     SourceInfo *source_info;
     TransferInfo *transfer_info;
-    char *primary;
-    char *secondary;
+    const char *primary;
+    g_autofree char *secondary = NULL;
     char *details = NULL;
-    int response;
     g_autofree gchar *basename = NULL;
 
     job = data->job;
@@ -1556,7 +1343,7 @@ file_deleted_callback (GFile    *file,
         return;
     }
 
-    primary = g_strdup (_("Error while deleting."));
+    primary = _("Error while deleting.");
 
     basename = get_basename (file);
 
@@ -1583,22 +1370,12 @@ file_deleted_callback (GFile    *file,
 
     details = error->message;
 
-    response = run_cancel_or_skip_warning (job,
-                                           primary,
-                                           secondary,
-                                           details,
-                                           source_info->num_files,
-                                           source_info->num_files - transfer_info->num_files);
-
-    if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
-    {
-        abort_job (job);
-    }
-    else if (response == 1)
-    {
-        /* skip all */
-        job->skip_all_error = TRUE;
-    }
+    show_skip_dialog (job,
+                      primary,
+                      secondary,
+                      details,
+                      source_info->num_files,
+                      source_info->num_files > transfer_info->num_files);
 }
 
 static void
@@ -1834,7 +1611,9 @@ trash_file (CommonJob     *job,
             GList        **to_delete)
 {
     g_autoptr (GError) error = NULL;
-    char *primary, *secondary, *details;
+    g_autofree char *primary = NULL;
+    const char *secondary = NULL;
+    const char *details = NULL;
     int response;
     g_autofree gchar *basename = NULL;
 
@@ -1876,46 +1655,48 @@ trash_file (CommonJob     *job,
                                  "to delete it immediately?"),
                                basename);
 
-    details = NULL;
-    secondary = NULL;
     if (!IS_IO_ERROR (error, NOT_SUPPORTED))
     {
         details = error->message;
     }
     else if (!g_file_is_native (file))
     {
-        secondary = g_strdup (_("This remote location does not support sending items to the trash."));
+        secondary = _("This remote location does not support sending items to the trash.");
     }
 
-    response = run_question (job,
-                             primary,
-                             secondary,
-                             details,
-                             (source_info->num_files - transfer_info->num_files) > 1,
-                             CANCEL, SKIP_ALL, SKIP, DELETE_ALL, DELETE,
-                             NULL);
+    NautilusDialogResponse responses = RESPONSE_SKIP | RESPONSE_DELETE;
 
-    if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
+    if ((source_info->num_files - transfer_info->num_files) > 1)
+    {
+        responses |= RESPONSE_SKIP_ALL | RESPONSE_DELETE_ALL;
+    }
+
+    response = run_dialog (job,
+                           primary,
+                           secondary,
+                           details,
+                           responses);
+
+    if (response == RESPONSE_CANCEL)
     {
         ((DeleteJob *) job)->user_cancel = TRUE;
         abort_job (job);
     }
-    else if (response == 1)         /* skip all */
+    else if (response == RESPONSE_SKIP_ALL)
     {
         *skipped_file = TRUE;
         job->skip_all_error = TRUE;
     }
-    else if (response == 2)         /* skip */
+    else if (response == RESPONSE_SKIP)
     {
         *skipped_file = TRUE;
-        job->skip_all_error = TRUE;
     }
-    else if (response == 3)         /* delete all */
+    else if (response == RESPONSE_DELETE_ALL)
     {
         *to_delete = g_list_prepend (*to_delete, file);
         job->delete_all = TRUE;
     }
-    else if (response == 4)         /* delete */
+    else if (response == RESPONSE_DELETE)
     {
         *to_delete = g_list_prepend (*to_delete, file);
     }
@@ -2341,10 +2122,9 @@ unmount_mount_callback (GObject      *source_object,
                 primary = g_strdup_printf (_("Unable to unmount “%s”"),
                                            mount_name);
             }
-            show_dialog (primary,
-                         error->message,
-                         data->parent_window,
-                         GTK_MESSAGE_ERROR);
+            nautilus_show_ok_dialog (primary,
+                                     error->message,
+                                     GTK_WIDGET (data->parent_window));
             g_free (primary);
         }
     }
@@ -2658,10 +2438,9 @@ volume_mount_cb (GObject      *source_object,
             primary = g_strdup_printf (_("Unable to access “%s”"), name);
             g_free (name);
             success = FALSE;
-            show_dialog (primary,
-                         error->message,
-                         parent,
-                         GTK_MESSAGE_ERROR);
+            nautilus_show_ok_dialog (primary,
+                                     error->message,
+                                     GTK_WIDGET (parent));
             g_free (primary);
         }
     }
@@ -2863,7 +2642,6 @@ scan_dir (GFile      *dir,
     GError *error;
     GFile *subdir;
     GFileEnumerator *enumerator;
-    char *primary, *secondary, *details;
     int response;
     SourceInfo saved_info;
     g_autolist (GFile) subdirs = NULL;
@@ -2933,9 +2711,10 @@ retry:
         else if (error)
         {
             g_autofree gchar *basename = NULL;
+            g_autofree gchar *primary = get_scan_primary (source_info->op);
+            g_autofree gchar *secondary = NULL;
+            const char *details = NULL;
 
-            primary = get_scan_primary (source_info->op);
-            details = NULL;
             basename = get_basename (dir);
 
             if (IS_IO_ERROR (error, PERMISSION_DENIED))
@@ -2951,28 +2730,26 @@ retry:
                 details = error->message;
             }
 
-            response = run_warning (job,
-                                    primary,
-                                    secondary,
-                                    details,
-                                    FALSE,
-                                    CANCEL, RETRY, SKIP,
-                                    NULL);
+            response = run_dialog (job,
+                                   primary,
+                                   secondary,
+                                   details,
+                                   RESPONSE_SKIP | RESPONSE_RETRY);
 
             g_error_free (error);
 
-            if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
+            if (response == RESPONSE_CANCEL)
             {
                 abort_job (job);
                 skip_subdirs = TRUE;
             }
-            else if (response == 1)
+            else if (response == RESPONSE_RETRY)
             {
                 g_clear_list (&subdirs, g_object_unref);
                 *source_info = saved_info;
                 goto retry;
             }
-            else if (response == 2)
+            else if (response == RESPONSE_SKIP)
             {
                 skip_readdir_error (job, dir);
             }
@@ -2995,9 +2772,10 @@ retry:
     else
     {
         g_autofree gchar *basename = NULL;
+        g_autofree gchar *primary = get_scan_primary (source_info->op);
+        g_autofree gchar *secondary = NULL;
+        const char *details = NULL;
 
-        primary = get_scan_primary (source_info->op);
-        details = NULL;
         basename = get_basename (dir);
         if (IS_IO_ERROR (error, PERMISSION_DENIED))
         {
@@ -3014,31 +2792,29 @@ retry:
         /* set show_all to TRUE here, as we don't know how many
          * files we'll end up processing yet.
          */
-        response = run_warning (job,
-                                primary,
-                                secondary,
-                                details,
-                                TRUE,
-                                CANCEL, SKIP_ALL, SKIP, RETRY,
-                                NULL);
+        response = run_dialog (job,
+                               primary,
+                               secondary,
+                               details,
+                               RESPONSE_SKIP | RESPONSE_SKIP_ALL | RESPONSE_RETRY);
 
         g_error_free (error);
 
-        if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
+        if (response == RESPONSE_CANCEL)
         {
             abort_job (job);
             skip_subdirs = TRUE;
         }
-        else if (response == 1 || response == 2)
+        else if (response == RESPONSE_SKIP || response == RESPONSE_SKIP_ALL)
         {
-            if (response == 1)
+            if (response == RESPONSE_SKIP_ALL)
             {
                 job->skip_all_error = TRUE;
             }
             skip_file (job, dir);
             skip_subdirs = TRUE;
         }
-        else if (response == 3)
+        else if (response == RESPONSE_RETRY)
         {
             goto retry;
         }
@@ -3070,9 +2846,6 @@ scan_file (GFile      *file,
     GError *error;
     GQueue *dirs;
     GFile *dir;
-    char *primary;
-    char *secondary;
-    char *details;
     int response;
 
     dirs = g_queue_new ();
@@ -3110,9 +2883,10 @@ retry:
     else
     {
         g_autofree gchar *basename = NULL;
+        g_autofree gchar *primary = get_scan_primary (source_info->op);
+        g_autofree gchar *secondary = NULL;
+        const char *details = NULL;
 
-        primary = get_scan_primary (source_info->op);
-        details = NULL;
         basename = get_basename (file);
 
         if (IS_IO_ERROR (error, PERMISSION_DENIED))
@@ -3129,29 +2903,27 @@ retry:
         /* set show_all to TRUE here, as we don't know how many
          * files we'll end up processing yet.
          */
-        response = run_warning (job,
-                                primary,
-                                secondary,
-                                details,
-                                TRUE,
-                                CANCEL, SKIP_ALL, SKIP, RETRY,
-                                NULL);
+        response = run_dialog (job,
+                               primary,
+                               secondary,
+                               details,
+                               RESPONSE_SKIP | RESPONSE_SKIP_ALL | RESPONSE_RETRY);
 
         g_error_free (error);
 
-        if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
+        if (response == RESPONSE_CANCEL)
         {
             abort_job (job);
         }
-        else if (response == 1 || response == 2)
+        else if (response == RESPONSE_SKIP || response == RESPONSE_SKIP_ALL)
         {
-            if (response == 1)
+            if (response == RESPONSE_SKIP_ALL)
             {
                 job->skip_all_error = TRUE;
             }
             skip_file (job, file);
         }
-        else if (response == 3)
+        else if (response == RESPONSE_RETRY)
         {
             goto retry;
         }
@@ -3214,7 +2986,6 @@ verify_destination (CommonJob   *job,
     const char *fs_type;
     guint64 free_size;
     guint64 size_difference;
-    char *primary, *secondary, *details;
     int response;
     GFileType file_type;
     gboolean dest_is_symlink = FALSE;
@@ -3237,43 +3008,40 @@ retry:
 
     if (info == NULL)
     {
-        g_autofree gchar *basename = NULL;
-
         if (IS_IO_ERROR (error, CANCELLED))
         {
             g_error_free (error);
             return;
         }
 
-        basename = get_basename (dest);
-        primary = g_strdup_printf (_("Error while copying to “%s”."), basename);
-        details = NULL;
+        g_autofree gchar *basename = get_basename (dest);
+        g_autofree gchar *primary = g_strdup_printf (_("Error while copying to “%s”."), basename);
+        const char *secondary;
+        const char *details = NULL;
 
         if (IS_IO_ERROR (error, PERMISSION_DENIED))
         {
-            secondary = g_strdup (_("You do not have permissions to access the destination folder."));
+            secondary = _("You do not have permissions to access the destination folder.");
         }
         else
         {
-            secondary = g_strdup (_("There was an error getting information about the destination."));
+            secondary = _("There was an error getting information about the destination.");
             details = error->message;
         }
 
-        response = run_error (job,
-                              primary,
-                              secondary,
-                              details,
-                              FALSE,
-                              CANCEL, RETRY,
-                              NULL);
+        response = run_dialog (job,
+                               primary,
+                               secondary,
+                               details,
+                               RESPONSE_RETRY);
 
         g_error_free (error);
 
-        if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
+        if (response == RESPONSE_CANCEL)
         {
             abort_job (job);
         }
-        else if (response == 1)
+        else if (response == RESPONSE_RETRY)
         {
             goto retry;
         }
@@ -3305,19 +3073,11 @@ retry:
 
     if (file_type != G_FILE_TYPE_DIRECTORY)
     {
-        g_autofree gchar *basename = NULL;
+        g_autofree gchar *basename = get_basename (dest);
+        g_autofree char *heading = g_strdup_printf (_("Error while copying to “%s”."), basename);
+        const char *body = _("The destination is not a folder.");
 
-        basename = get_basename (dest);
-        primary = g_strdup_printf (_("Error while copying to “%s”."), basename);
-        secondary = g_strdup (_("The destination is not a folder."));
-
-        run_error (job,
-                   primary,
-                   secondary,
-                   NULL,
-                   FALSE,
-                   CANCEL,
-                   NULL);
+        nautilus_show_ok_dialog (heading, body, GTK_WIDGET (job->parent_window));
 
         abort_job (job);
         return;
@@ -3358,38 +3118,34 @@ retry:
 
         if (free_size < (guint64) required_size)
         {
-            g_autofree gchar *basename = NULL;
+            g_autofree gchar *basename = get_basename (dest);
             g_autofree gchar *formatted_size = NULL;
+            g_autofree gchar *primary = g_strdup_printf (_("Error while copying to “%s”."), basename);
+            const char *secondary;
+            g_autofree char *details = NULL;
 
-            basename = get_basename (dest);
             size_difference = required_size - free_size;
-            primary = g_strdup_printf (_("Error while copying to “%s”."), basename);
-            secondary = g_strdup (_("There is not enough space on the destination."
-                                    " Try to remove files to make space."));
+            secondary = _("There is not enough space on the destination. Try to remove files to make space.");
 
             formatted_size = g_format_size (size_difference);
             details = g_strdup_printf (_("%s more space is required to copy to the destination."),
                                        formatted_size);
 
-            response = run_warning (job,
-                                    primary,
-                                    secondary,
-                                    details,
-                                    FALSE,
-                                    CANCEL,
-                                    COPY_FORCE,
-                                    RETRY,
-                                    NULL);
+            response = run_dialog (job,
+                                   primary,
+                                   secondary,
+                                   details,
+                                   RESPONSE_COPY_FORCE | RESPONSE_RETRY);
 
-            if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
+            if (response == RESPONSE_CANCEL)
             {
                 abort_job (job);
             }
-            else if (response == 2)
+            else if (response == RESPONSE_RETRY)
             {
                 goto retry;
             }
-            else if (response == 1)
+            else if (response == RESPONSE_COPY_FORCE)
             {
                 /* We are forced to copy - just fall through ... */
             }
@@ -3404,15 +3160,13 @@ retry:
         source_info != NULL && source_info->largest_file_bytes > MAXIMUM_FAT_FILE_SIZE &&
         g_strcmp0 (fs_type, "msdos") == 0)
     {
-        primary = g_strdup (_("File too Large for Destination"));
-        secondary = g_strdup (_("Files bigger than 4.3 GB cannot be copied onto a FAT filesystem."));
-        details = NULL;
-        response = run_warning (job,
-                                primary, secondary, details,
-                                FALSE,
-                                CANCEL, FORCE_OPERATION, NULL);
+        response = run_dialog (job,
+                               _("File too Large for Destination"),
+                               _("Files bigger than 4.3 GB cannot be copied onto a FAT filesystem."),
+                               NULL,
+                               RESPONSE_PROCEED);
 
-        if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
+        if (response == RESPONSE_CANCEL)
         {
             abort_job (job);
         }
@@ -3422,19 +3176,11 @@ retry:
         g_file_info_get_attribute_boolean (fsinfo,
                                            G_FILE_ATTRIBUTE_FILESYSTEM_READONLY))
     {
-        g_autofree gchar *basename = NULL;
+        g_autofree gchar *basename = get_basename (dest);
+        g_autofree gchar *heading = g_strdup_printf (_("Error while copying to “%s”."), basename);
+        const char *body = _("The destination is read-only.");
 
-        basename = get_basename (dest);
-        primary = g_strdup_printf (_("Error while copying to “%s”."), basename);
-        secondary = g_strdup (_("The destination is read-only."));
-
-        run_error (job,
-                   primary,
-                   secondary,
-                   NULL,
-                   FALSE,
-                   CANCEL,
-                   NULL);
+        nautilus_show_ok_dialog (heading, body, GTK_WIDGET (job->parent_window));
 
         g_error_free (error);
 
@@ -4240,7 +3986,6 @@ create_dest_dir (CommonJob  *job,
 {
     GError *error;
     GFile *new_dest, *dest_dir;
-    char *primary, *secondary, *details;
     int response;
     gboolean handled_invalid_filename;
     gboolean res;
@@ -4272,8 +4017,6 @@ retry:
 
     if (!res)
     {
-        g_autofree gchar *basename = NULL;
-
         if (IS_IO_ERROR (error, CANCELLED))
         {
             g_error_free (error);
@@ -4309,9 +4052,9 @@ retry:
             }
         }
 
-        primary = g_strdup (_("Error while copying."));
-        details = NULL;
-        basename = get_basename (src);
+        g_autofree char *secondary = NULL;
+        const char *details = NULL;
+        g_autofree gchar *basename = get_basename (src);
 
         if (IS_IO_ERROR (error, PERMISSION_DENIED))
         {
@@ -4326,25 +4069,23 @@ retry:
             details = error->message;
         }
 
-        response = run_warning (job,
-                                primary,
-                                secondary,
-                                details,
-                                FALSE,
-                                CANCEL, SKIP, RETRY,
-                                NULL);
+        response = run_dialog (job,
+                               _("Error while copying."),
+                               secondary,
+                               details,
+                               RESPONSE_SKIP | RESPONSE_RETRY);
 
         g_error_free (error);
 
-        if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
+        if (response == RESPONSE_CANCEL)
         {
             abort_job (job);
         }
-        else if (response == 1)
+        else if (response == RESPONSE_SKIP)
         {
             /* Skip: Do Nothing  */
         }
-        else if (response == 2)
+        else if (response == RESPONSE_RETRY)
         {
             goto retry;
         }
@@ -4389,7 +4130,6 @@ copy_move_directory (CopyMoveJob   *copy_job,
     GError *error;
     GFile *src_file;
     GFileEnumerator *enumerator;
-    char *primary, *secondary, *details;
     char *dest_fs_type;
     int response;
     gboolean skip_error;
@@ -4494,16 +4234,18 @@ retry:
         else if (error)
         {
             g_autofree gchar *basename = NULL;
+            const char *primary;
+            g_autofree char *secondary = NULL;
+            const char *details = NULL;
 
             if (copy_job->is_move)
             {
-                primary = g_strdup (_("Error while moving."));
+                primary = _("Error while moving.");
             }
             else
             {
-                primary = g_strdup (_("Error while copying."));
+                primary = _("Error while copying.");
             }
-            details = NULL;
             basename = get_basename (src);
 
             if (IS_IO_ERROR (error, PERMISSION_DENIED))
@@ -4519,21 +4261,19 @@ retry:
                 details = error->message;
             }
 
-            response = run_warning (job,
-                                    primary,
-                                    secondary,
-                                    details,
-                                    FALSE,
-                                    CANCEL, _("_Skip files"),
-                                    NULL);
+            response = run_dialog (job,
+                                   primary,
+                                   secondary,
+                                   details,
+                                   RESPONSE_SKIP_FILES);
 
             g_error_free (error);
 
-            if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
+            if (response == RESPONSE_CANCEL)
             {
                 abort_job (job);
             }
-            else if (response == 1)
+            else if (response == RESPONSE_SKIP_FILES)
             {
                 /* Skip: Do Nothing */
                 local_skipped_file = TRUE;
@@ -4576,16 +4316,18 @@ retry:
     else
     {
         g_autofree gchar *basename = NULL;
+        const char *primary;
+        g_autofree char *secondary = NULL;
+        const char *details = NULL;
 
         if (copy_job->is_move)
         {
-            primary = g_strdup (_("Error while moving."));
+            primary = _("Error while moving.");
         }
         else
         {
-            primary = g_strdup (_("Error while copying."));
+            primary = _("Error while copying.");
         }
-        details = NULL;
         basename = get_basename (src);
 
         if (IS_IO_ERROR (error, PERMISSION_DENIED))
@@ -4601,26 +4343,24 @@ retry:
             details = error->message;
         }
 
-        response = run_warning (job,
-                                primary,
-                                secondary,
-                                details,
-                                FALSE,
-                                CANCEL, SKIP, RETRY,
-                                NULL);
+        response = run_dialog (job,
+                               primary,
+                               secondary,
+                               details,
+                               RESPONSE_SKIP | RESPONSE_RETRY);
 
         g_error_free (error);
 
-        if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
+        if (response == RESPONSE_CANCEL)
         {
             abort_job (job);
         }
-        else if (response == 1)
+        else if (response == RESPONSE_SKIP)
         {
             /* Skip: Do Nothing  */
             *skipped_file = TRUE;
         }
-        else if (response == 2)
+        else if (response == RESPONSE_RETRY)
         {
             goto retry;
         }
@@ -4647,42 +4387,24 @@ retry:
     {
         if (!g_file_delete (src, job->cancellable, &error))
         {
-            g_autofree gchar *basename = NULL;
-
             if (job->skip_all_error)
             {
                 *skipped_file = TRUE;
                 goto skip;
             }
-            basename = get_basename (src);
-            primary = g_strdup_printf (_("Error while moving “%s”."), basename);
-            secondary = g_strdup (_("Could not remove the source folder."));
-            details = error->message;
 
-            response = run_cancel_or_skip_warning (job,
-                                                   primary,
-                                                   secondary,
-                                                   details,
-                                                   source_info->num_files,
-                                                   source_info->num_files - transfer_info->num_files);
+            g_autofree gchar *basename = get_basename (src);
+            g_autofree char *primary = g_strdup_printf (_("Error while moving “%s”."), basename);
+            const char *secondary = _("Could not remove the source folder.");
+            const char *details = error->message;
 
-            if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
-            {
-                abort_job (job);
-            }
-            else if (response == 1)                 /* skip all */
-            {
-                job->skip_all_error = TRUE;
-                *skipped_file = TRUE;
-            }
-            else if (response == 2)                 /* skip */
-            {
-                *skipped_file = TRUE;
-            }
-            else
-            {
-                g_assert_not_reached ();
-            }
+            gboolean skip = show_skip_dialog (job,
+                                              primary,
+                                              secondary,
+                                              details,
+                                              source_info->num_files,
+                                              source_info->num_files > transfer_info->num_files);
+            *skipped_file = !skip;
 
 skip:
             g_error_free (error);
@@ -4857,7 +4579,6 @@ get_target_file_from_source_display_name (CopyMoveJob *copy_job,
     CommonJob *job;
     g_autoptr (GError) error = NULL;
     g_autoptr (GFileInfo) info = NULL;
-    gchar *primary, *secondary;
     GFile *dest = NULL;
 
     job = (CommonJob *) copy_job;
@@ -4865,23 +4586,11 @@ get_target_file_from_source_display_name (CopyMoveJob *copy_job,
     info = g_file_query_info (src, G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME, 0, NULL, &error);
     if (info == NULL)
     {
-        if (copy_job->is_move)
-        {
-            primary = g_strdup (_("Error while moving."));
-        }
-        else
-        {
-            primary = g_strdup (_("Error while copying."));
-        }
-        secondary = g_strdup (_("There was an error getting information about the source."));
+        const char *heading = copy_job->is_move ?
+                              _("Error while moving.") :
+                              _("Error while copying.");
 
-        run_error (job,
-                   primary,
-                   secondary,
-                   error->message,
-                   FALSE,
-                   CANCEL,
-                   NULL);
+        nautilus_show_ok_dialog (heading, error->message, GTK_WIDGET (job->parent_window));
 
         abort_job (job);
     }
@@ -4912,7 +4621,6 @@ copy_move_file (CopyMoveJob   *copy_job,
     GFile *dest, *new_dest;
     GError *error;
     GFileCopyFlags flags;
-    char *primary, *secondary, *details;
     ProgressData pdata;
     gboolean would_recurse;
     CommonJob *job;
@@ -4966,40 +4674,22 @@ copy_move_file (CopyMoveJob   *copy_job,
      * detect and report it at this level) */
     if (test_dir_is_parent (dest_dir, src))
     {
-        int response;
-
         if (job->skip_all_error)
         {
             goto out;
         }
 
-        /*  the run_warning() frees all strings passed in automatically  */
-        primary = copy_job->is_move ? g_strdup (_("You cannot move a folder into itself."))
-                  : g_strdup (_("You cannot copy a folder into itself."));
-        secondary = g_strdup (_("The destination folder is inside the source folder."));
+        const char *primary = copy_job->is_move ?
+                              _("You cannot move a folder into itself.") :
+                              _("You cannot copy a folder into itself.");
+        const char *secondary = _("The destination folder is inside the source folder.");
 
-        response = run_cancel_or_skip_warning (job,
-                                               primary,
-                                               secondary,
-                                               NULL,
-                                               source_info->num_files,
-                                               source_info->num_files - transfer_info->num_files);
-
-        if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
-        {
-            abort_job (job);
-        }
-        else if (response == 1)             /* skip all */
-        {
-            job->skip_all_error = TRUE;
-        }
-        else if (response == 2)             /* skip */
-        {               /* do nothing */
-        }
-        else
-        {
-            g_assert_not_reached ();
-        }
+        show_skip_dialog (job,
+                          primary,
+                          secondary,
+                          NULL,
+                          source_info->num_files,
+                          source_info->num_files > transfer_info->num_files);
 
         goto out;
     }
@@ -5008,40 +4698,22 @@ copy_move_file (CopyMoveJob   *copy_job,
      */
     if (test_dir_is_parent (src, dest))
     {
-        int response;
-
         if (job->skip_all_error)
         {
             goto out;
         }
 
-        /*  the run_warning() frees all strings passed in automatically  */
-        primary = copy_job->is_move ? g_strdup (_("You cannot move a file over itself."))
-                  : g_strdup (_("You cannot copy a file over itself."));
-        secondary = g_strdup (_("The source file would be overwritten by the destination."));
+        const char *primary = copy_job->is_move ?
+                              _("You cannot move a file over itself.") :
+                              _("You cannot copy a file over itself.");
+        const char *secondary = _("The source file would be overwritten by the destination.");
 
-        response = run_cancel_or_skip_warning (job,
-                                               primary,
-                                               secondary,
-                                               NULL,
-                                               source_info->num_files,
-                                               source_info->num_files - transfer_info->num_files);
-
-        if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
-        {
-            abort_job (job);
-        }
-        else if (response == 1)             /* skip all */
-        {
-            job->skip_all_error = TRUE;
-        }
-        else if (response == 2)             /* skip */
-        {               /* do nothing */
-        }
-        else
-        {
-            g_assert_not_reached ();
-        }
+        show_skip_dialog (job,
+                          primary,
+                          secondary,
+                          NULL,
+                          source_info->num_files,
+                          source_info->num_files > transfer_info->num_files);
 
         goto out;
     }
@@ -5273,17 +4945,18 @@ retry:
             if (!g_file_delete (dest, job->cancellable, &error) &&
                 !IS_IO_ERROR (error, NOT_FOUND))
             {
-                g_autofree gchar *basename = NULL;
-                g_autofree gchar *filename = NULL;
-                int response;
-
                 if (job->skip_all_error)
                 {
                     g_error_free (error);
                     goto out;
                 }
 
-                basename = get_basename (src);
+                g_autofree gchar *basename = get_basename (src);
+                g_autofree gchar *filename = NULL;
+                g_autofree char *primary = NULL;
+                g_autofree char *secondary = NULL;
+                const char *details = NULL;
+
                 if (copy_job->is_move)
                 {
                     primary = g_strdup_printf (_("Error while moving “%s”."), basename);
@@ -5301,31 +4974,15 @@ retry:
                 /* setting TRUE on show_all here, as we could have
                  * another error on the same file later.
                  */
-                response = run_warning (job,
-                                        primary,
-                                        secondary,
-                                        details,
-                                        TRUE,
-                                        CANCEL, SKIP_ALL, SKIP,
-                                        NULL);
+                show_skip_dialog (job,
+                                  primary,
+                                  secondary,
+                                  details,
+                                  source_info->num_files,
+                                  TRUE);
 
                 g_error_free (error);
 
-                if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
-                {
-                    abort_job (job);
-                }
-                else if (response == 1)                     /* skip all */
-                {
-                    job->skip_all_error = TRUE;
-                }
-                else if (response == 2)                     /* skip */
-                {                       /* do nothing */
-                }
-                else
-                {
-                    g_assert_not_reached ();
-                }
                 goto out;
             }
             if (error)
@@ -5368,46 +5025,26 @@ retry:
     /* Other error */
     else
     {
-        g_autofree gchar *basename = NULL;
-        g_autofree gchar *filename = NULL;
-        int response;
-
         if (job->skip_all_error)
         {
             g_error_free (error);
             goto out;
         }
-        basename = get_basename (src);
-        primary = g_strdup_printf (_("Error while copying “%s”."), basename);
-        filename = get_truncated_parse_name (dest_dir);
-        secondary = g_strdup_printf (_("There was an error copying the file into %s."),
-                                     filename);
-        details = error->message;
 
-        response = run_cancel_or_skip_warning (job,
-                                               primary,
-                                               secondary,
-                                               details,
-                                               source_info->num_files,
-                                               source_info->num_files - transfer_info->num_files);
+        g_autofree gchar *basename = get_basename (src);
+        g_autofree gchar *filename = get_truncated_parse_name (dest_dir);
+        g_autofree char *primary = g_strdup_printf (_("Error while copying “%s”."), basename);
+        g_autofree char *secondary = g_strdup_printf (_("There was an error copying the file into %s."),
+                                                      filename);
+        const char *details = error->message;
 
+        show_skip_dialog (job,
+                          primary,
+                          secondary,
+                          details,
+                          source_info->num_files,
+                          source_info->num_files > transfer_info->num_files);
         g_error_free (error);
-
-        if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
-        {
-            abort_job (job);
-        }
-        else if (response == 1)             /* skip all */
-        {
-            job->skip_all_error = TRUE;
-        }
-        else if (response == 2)             /* skip */
-        {               /* do nothing */
-        }
-        else
-        {
-            g_assert_not_reached ();
-        }
     }
 out:
     *skipped_file = TRUE;     /* Or aborted, but same-same */
@@ -5745,13 +5382,13 @@ move_file_prepare (CopyMoveJob  *move_job,
                    char        **dest_fs_type,
                    GHashTable   *debuting_files,
                    GList       **fallback_files,
+                   int           total,
                    int           files_left)
 {
     GFile *dest, *new_dest;
     GError *error;
     CommonJob *job;
     gboolean overwrite;
-    char *primary, *secondary, *details;
     GFileCopyFlags flags;
     MoveFileCopyFallback *fallback;
     gboolean handled_invalid_filename;
@@ -5781,41 +5418,22 @@ move_file_prepare (CopyMoveJob  *move_job,
      * detect and report it at this level) */
     if (test_dir_is_parent (dest_dir, src))
     {
-        int response;
-
         if (job->skip_all_error)
         {
             goto out;
         }
 
-        /*  the run_warning() frees all strings passed in automatically  */
-        primary = move_job->is_move ? g_strdup (_("You cannot move a folder into itself."))
-                  : g_strdup (_("You cannot copy a folder into itself."));
-        secondary = g_strdup (_("The destination folder is inside the source folder."));
+        const char *primary = move_job->is_move ?
+                              _("You cannot move a folder into itself.") :
+                              _("You cannot copy a folder into itself.");
+        const char *secondary = _("The destination folder is inside the source folder.");
 
-        response = run_warning (job,
-                                primary,
-                                secondary,
-                                NULL,
-                                files_left > 1,
-                                CANCEL, SKIP_ALL, SKIP,
-                                NULL);
-
-        if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
-        {
-            abort_job (job);
-        }
-        else if (response == 1)             /* skip all */
-        {
-            job->skip_all_error = TRUE;
-        }
-        else if (response == 2)             /* skip */
-        {               /* do nothing */
-        }
-        else
-        {
-            g_assert_not_reached ();
-        }
+        show_skip_dialog (job,
+                          primary,
+                          secondary,
+                          NULL,
+                          total,
+                          files_left > 1);
 
         goto out;
     }
@@ -5824,42 +5442,22 @@ move_file_prepare (CopyMoveJob  *move_job,
      */
     if (test_dir_is_parent (src, dest))
     {
-        int response;
-
         if (job->skip_all_error)
         {
             goto out;
         }
 
-        /*  the run_warning() frees all strings passed in automatically  */
-        primary = move_job->is_move ? g_strdup (_("You cannot move a file over itself."))
-                  : g_strdup (_("You cannot copy a file over itself."));
-        secondary = g_strdup (_("The source file would be overwritten by the destination."));
+        const char *primary = move_job->is_move ?
+                              _("You cannot move a file over itself.") :
+                              _("You cannot copy a file over itself.");
+        const char *secondary = _("The source file would be overwritten by the destination.");
 
-        response = run_warning (job,
-                                primary,
-                                secondary,
-                                NULL,
-                                files_left > 1,
-                                CANCEL, SKIP_ALL, SKIP,
-                                NULL);
-
-        if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
-        {
-            abort_job (job);
-        }
-        else if (response == 1)             /* skip all */
-        {
-            job->skip_all_error = TRUE;
-        }
-        else if (response == 2)             /* skip */
-        {
-            /* do nothing */
-        }
-        else
-        {
-            g_assert_not_reached ();
-        }
+        show_skip_dialog (job,
+                          primary,
+                          secondary,
+                          NULL,
+                          total,
+                          files_left > 1);
 
         goto out;
     }
@@ -6019,48 +5617,27 @@ retry:
     /* Other error */
     else
     {
-        g_autofree gchar *basename = NULL;
-        g_autofree gchar *filename = NULL;
-        int response;
-
         if (job->skip_all_error)
         {
             g_error_free (error);
             goto out;
         }
-        basename = get_basename (src);
-        primary = g_strdup_printf (_("Error while moving “%s”."), basename);
-        filename = get_truncated_parse_name (dest_dir);
-        secondary = g_strdup_printf (_("There was an error moving the file into %s."),
-                                     filename);
 
-        details = error->message;
+        g_autofree gchar *basename = get_basename (src);
+        g_autofree gchar *filename = get_truncated_parse_name (dest_dir);
+        g_autofree char *primary = g_strdup_printf (_("Error while moving “%s”."), basename);
+        g_autofree char *secondary = g_strdup_printf (_("There was an error moving the file into %s."),
+                                                      filename);
+        const char *details = error->message;
 
-        response = run_warning (job,
-                                primary,
-                                secondary,
-                                details,
-                                files_left > 1,
-                                CANCEL, SKIP_ALL, SKIP,
-                                NULL);
+        show_skip_dialog (job,
+                          primary,
+                          secondary,
+                          details,
+                          total,
+                          files_left > 1);
 
         g_error_free (error);
-
-        if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
-        {
-            abort_job (job);
-        }
-        else if (response == 1)             /* skip all */
-        {
-            job->skip_all_error = TRUE;
-        }
-        else if (response == 2)             /* skip */
-        {               /* do nothing */
-        }
-        else
-        {
-            g_assert_not_reached ();
-        }
     }
 
 out:
@@ -6080,7 +5657,8 @@ move_files_prepare (CopyMoveJob  *job,
 
     common = &job->common;
 
-    int left = g_list_length (job->files);
+    int total = g_list_length (job->files);
+    int left = total;
 
     report_preparing_move_progress (job, left);
 
@@ -6100,6 +5678,7 @@ move_files_prepare (CopyMoveJob  *job,
                            same_fs, dest_fs_type,
                            job->debuting_files,
                            fallbacks,
+                           total,
                            left);
         report_preparing_move_progress (job, --left);
     }
@@ -6138,8 +5717,6 @@ move_files (CopyMoveJob   *job,
             same_fs = has_fs_id (src, dest_fs_id);
         }
 
-        /* Set overwrite to true, as the user has
-         *  selected overwrite on all toplevel items */
         skipped_file = FALSE;
         copy_move_file (job, src, job->destination,
                         same_fs, FALSE, dest_fs_type,
@@ -6415,6 +5992,7 @@ link_file (CopyMoveJob  *job,
            GFile        *dest_dir,
            char        **dest_fs_type,
            GHashTable   *debuting_files,
+           int           total,
            int           files_left)
 {
     GFile *src_dir;
@@ -6425,8 +6003,6 @@ link_file (CopyMoveJob  *job,
     gboolean not_local;
     GError *error;
     CommonJob *common;
-    char *primary, *secondary, *details;
-    int response;
     gboolean handled_invalid_filename;
 
     common = (CommonJob *) job;
@@ -6515,24 +6091,23 @@ retry:
     /* Other error */
     else if (error != NULL)
     {
-        g_autofree gchar *basename = NULL;
-
         if (common->skip_all_error)
         {
             return;
         }
-        basename = get_basename (src);
-        primary = g_strdup_printf (_("Error while creating link to “%s”."),
-                                   basename);
+        g_autofree gchar *basename = get_basename (src);
+        g_autofree char *primary = g_strdup_printf (_("Error while creating link to %s."),
+                                                    basename);
+        g_autofree char *secondary = NULL;
+        const char *details = NULL;
+
         if (not_local)
         {
             secondary = g_strdup (_("Symbolic links only supported for local files"));
-            details = NULL;
         }
         else if (IS_IO_ERROR (error, NOT_SUPPORTED))
         {
             secondary = g_strdup (_("The target doesn’t support symbolic links."));
-            details = NULL;
         }
         else
         {
@@ -6544,33 +6119,16 @@ retry:
             details = error->message;
         }
 
-        response = run_warning (common,
-                                primary,
-                                secondary,
-                                details,
-                                files_left > 1,
-                                CANCEL, SKIP_ALL, SKIP,
-                                NULL);
+        show_skip_dialog (common,
+                          primary,
+                          secondary,
+                          details,
+                          total,
+                          files_left > 1);
 
         if (error)
         {
             g_error_free (error);
-        }
-
-        if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
-        {
-            abort_job (common);
-        }
-        else if (response == 1)             /* skip all */
-        {
-            common->skip_all_error = TRUE;
-        }
-        else if (response == 2)             /* skip */
-        {               /* do nothing */
-        }
-        else
-        {
-            g_assert_not_reached ();
         }
     }
 }
@@ -6640,7 +6198,7 @@ link_task_thread_func (GTask        *task,
 
         link_file (job, src, job->destination,
                    &dest_fs_type, job->debuting_files,
-                   left);
+                   total, left);
         report_preparing_link_progress (job, total, --left);
         i++;
     }
@@ -7125,8 +6683,6 @@ create_task_thread_func (GTask        *task,
     GError *error;
     gboolean res;
     gboolean filename_is_utf8;
-    char *primary, *secondary, *details;
-    int response;
     void *data;
     gsize length;
     GFileOutputStream *out;
@@ -7396,10 +6952,12 @@ retry:
         /* Other error */
         else
         {
-            g_autofree gchar *basename = NULL;
+            g_autofree gchar *basename = get_basename (dest);
             g_autofree gchar *parse_name = NULL;
+            g_autofree char *primary = NULL;
+            g_autofree char *secondary = NULL;
+            const char *details = error->message;
 
-            basename = get_basename (dest);
             if (job->make_dir)
             {
                 primary = g_strdup_printf (_("Error while creating directory “%s”."),
@@ -7414,29 +6972,14 @@ retry:
             secondary = g_strdup_printf (_("There was an error creating the directory in %s."),
                                          parse_name);
 
-            details = error->message;
-
-            response = run_warning (common,
-                                    primary,
-                                    secondary,
-                                    details,
-                                    FALSE,
-                                    CANCEL, SKIP,
-                                    NULL);
+            show_skip_dialog (common,
+                              primary,
+                              secondary,
+                              details,
+                              1,
+                              FALSE);
 
             g_error_free (error);
-
-            if (response == 0 || response == GTK_RESPONSE_DELETE_EVENT)
-            {
-                abort_job (common);
-            }
-            else if (response == 1)                 /* skip */
-            {                   /* do nothing */
-            }
-            else
-            {
-                g_assert_not_reached ();
-            }
         }
     }
 }
@@ -8066,9 +7609,9 @@ extract_job_on_error (AutoarExtractor *extractor,
     ExtractJob *extract_job = user_data;
     GFile *source_file;
     GFile *destination;
-    gint response_id;
     gint remaining_files;
     g_autofree gchar *basename = NULL;
+    g_autofree gchar *heading = NULL;
 
     source_file = autoar_extractor_get_source_file (extractor);
 
@@ -8109,22 +7652,16 @@ extract_job_on_error (AutoarExtractor *extractor,
     remaining_files = g_list_length (g_list_find_custom (extract_job->source_files,
                                                          source_file,
                                                          (GCompareFunc) g_file_equal)) - 1;
-    response_id = run_cancel_or_skip_warning ((CommonJob *) extract_job,
-                                              g_strdup_printf (_("There was an error while extracting “%s”."),
-                                                               basename),
-                                              g_strdup (error->message),
-                                              NULL,
-                                              extract_job->total_files,
-                                              remaining_files);
 
-    if (response_id == 0 || response_id == GTK_RESPONSE_DELETE_EVENT)
-    {
-        abort_job ((CommonJob *) extract_job);
-    }
-    else if (response_id == 1)
-    {
-        extract_job->common.skip_all_error = TRUE;
-    }
+    heading = g_strdup_printf (_("There was an error while extracting “%s”."),
+                               basename);
+
+    show_skip_dialog ((CommonJob *) extract_job,
+                      heading,
+                      error->message,
+                      NULL,
+                      extract_job->total_files,
+                      remaining_files > 1);
 }
 
 static void
@@ -8191,18 +7728,15 @@ extract_job_on_scanned (AutoarExtractor *extractor,
     {
         GFile *source_file = autoar_extractor_get_source_file (extractor);
         g_autofree gchar *basename = get_basename (source_file);
+        g_autofree char *primary = g_strdup_printf (_("Not enough free space to extract “%s”"),
+                                                    basename);
+        GtkWidget *parent = GTK_WIDGET (extract_job->common.parent_window);
 
         nautilus_progress_info_take_status (extract_job->common.progress,
                                             g_strdup_printf (_("Error extracting “%s”"),
                                                              basename),
                                             NULL);
-        run_error (&extract_job->common,
-                   g_strdup_printf (_("Not enough free space to extract “%s”"), basename),
-                   NULL,
-                   NULL,
-                   FALSE,
-                   CANCEL,
-                   NULL);
+        nautilus_show_ok_dialog (primary, NULL, parent);
 
         abort_job ((CommonJob *) extract_job);
     }
@@ -8648,13 +8182,9 @@ compress_job_on_error (AutoarCompressor *compressor,
     nautilus_progress_info_take_status (compress_job->common.progress,
                                         status, short_status);
 
-    run_error ((CommonJob *) compress_job,
-               g_strdup (_("There was an error while compressing files.")),
-               g_strdup (error->message),
-               NULL,
-               FALSE,
-               CANCEL,
-               NULL);
+    nautilus_show_ok_dialog (_("There was an error while compressing files."),
+                             error->message,
+                             GTK_WIDGET (compress_job->common.parent_window));
 
     abort_job ((CommonJob *) compress_job);
 }
