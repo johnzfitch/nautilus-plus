@@ -40,8 +40,6 @@
 #include <gio/gio.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <sys/stat.h>
-#include <stdio.h>
 
 #define NAUTILUS_USER_DIRECTORY_NAME "nautilus"
 #define DEFAULT_NAUTILUS_DIRECTORY_MODE (0755)
@@ -574,10 +572,9 @@ nautilus_restore_files_from_trash (GList     *files,
         g_autofree char *message = g_strdup_printf (_("Could not determine original location of “%s” "),
                                                     nautilus_file_get_display_name (file));
 
-        show_dialog (message,
-                     _("The item cannot be restored from trash"),
-                     parent_window,
-                     GTK_MESSAGE_WARNING);
+        nautilus_show_ok_dialog (message,
+                                 _("The item cannot be restored from trash"),
+                                 GTK_WIDGET (parent_window));
     }
 
     if (original_dirs_hash != NULL)

@@ -15,8 +15,6 @@
 #include "nautilus-ui-utilities.h"
 #include "nautilus-view-item.h"
 #include "nautilus-view-cell.h"
-#include "nautilus-animated-thumbnail.h"
-#include "nautilus-animated-paintable.h"
 
 struct _NautilusGridCell
 {
@@ -33,38 +31,10 @@ struct _NautilusGridCell
     GtkWidget *second_caption;
     GtkWidget *third_caption;
 
-    /* Animation support */
-    NautilusAnimatedPaintable *animated_paintable;
-    gboolean is_animated;
-    gboolean animation_playing;
-
     gboolean in_file_change;
 };
 
 G_DEFINE_TYPE (NautilusGridCell, nautilus_grid_cell, NAUTILUS_TYPE_VIEW_CELL)
-
-static gboolean
-should_play_animation (NautilusGridCell *self)
-{
-    NautilusAnimationMode mode = nautilus_animated_thumbnail_get_mode ();
-
-    switch (mode)
-    {
-        case NAUTILUS_ANIMATION_MODE_NEVER:
-            return FALSE;
-
-        case NAUTILUS_ANIMATION_MODE_ALWAYS:
-            return TRUE;
-
-        case NAUTILUS_ANIMATION_MODE_ON_SELECT:
-        case NAUTILUS_ANIMATION_MODE_ON_HOVER:
-            /* Will be handled by event handlers */
-            return FALSE;
-
-        default:
-            return FALSE;
-    }
-}
 
 static void
 update_icon (NautilusGridCell *self)
@@ -290,21 +260,6 @@ static void
 nautilus_grid_cell_dispose (GObject *object)
 {
     NautilusGridCell *self = (NautilusGridCell *) object;
-
-    /* Disconnect signal group BEFORE disposing template to prevent
-     * callbacks from firing on widgets being destroyed. This fixes
-     * use-after-free crashes during search result cleanup. */
-    if (self->item_signal_group != NULL)
-    {
-        g_signal_group_set_target (self->item_signal_group, NULL);
-    }
-
-    /* Stop and clean up animation */
-    if (self->animated_paintable != NULL)
-    {
-        nautilus_animated_paintable_stop (self->animated_paintable);
-        g_clear_object (&self->animated_paintable);
-    }
 
     gtk_widget_dispose_template (GTK_WIDGET (self), NAUTILUS_TYPE_GRID_CELL);
     g_clear_object (&self->item_signal_group);
