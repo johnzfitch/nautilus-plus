@@ -780,6 +780,41 @@ get_activation_action (NautilusFile *file)
     return action;
 }
 
+static GHashTable *video_content_types_hash;
+
+static void
+ensure_video_types_hash (void)
+{
+    if (G_LIKELY (video_content_types_hash != NULL))
+    {
+        return;
+    }
+
+    GList *mime_types = g_content_types_get_registered ();
+    video_content_types_hash = g_hash_table_new (g_str_hash, g_str_equal);
+
+    for (GList *l = mime_types; l != NULL; l = l->next)
+    {
+        const char *content_type = l->data;
+        g_autofree char *generic_icon_name = g_content_type_get_generic_icon_name (content_type);
+
+        if (g_str_equal (generic_icon_name, "video-x-generic"))
+        {
+            g_hash_table_add (video_content_types_hash, g_steal_pointer (&l->data));
+        }
+    }
+
+    g_list_free_full (mime_types, g_free);
+}
+
+gboolean
+nautilus_mime_is_video (const char *content_type)
+{
+    ensure_video_types_hash ();
+
+    return g_hash_table_contains (video_content_types_hash, content_type);
+}
+
 gboolean
 nautilus_mime_file_extracts (NautilusFile *file)
 {
@@ -1185,7 +1220,7 @@ open_with_response_cb (GtkDialog *dialog,
 }
 
 static void
-choose_program (GtkDialog *message_dialog,
+choose_program (AdwDialog *message_dialog,
                 gchar     *response,
                 gpointer   callback_data)
 {
@@ -1207,8 +1242,8 @@ choose_program (GtkDialog *message_dialog,
     location = nautilus_file_get_location (file);
     nautilus_file_ref (file);
 
-    /* Destroy the message dialog after ref:ing the file */
-    gtk_window_destroy (GTK_WINDOW (message_dialog));
+    /* Close the dialog after ref:ing the file */
+    adw_dialog_close (message_dialog);
 
     dialog = gtk_app_chooser_dialog_new (parameters->parent_window,
                                          GTK_DIALOG_MODAL,
@@ -1289,10 +1324,9 @@ search_for_application_dbus_call_notify_cb (GDBusProxy   *proxy,
             message = g_strdup_printf ("%s\n%s",
                                        _("There was an internal error trying to search for apps:"),
                                        error->message);
-            show_dialog (_("Unable to search for app"),
-                         message,
-                         parameters_install->parent_window,
-                         GTK_MESSAGE_ERROR);
+            nautilus_show_ok_dialog (_("Unable to search for app"),
+                                     message,
+                                     GTK_WIDGET (parameters_install->parent_window));
             g_free (message);
         }
         else
@@ -1377,8 +1411,8 @@ pk_proxy_appeared_cb (GObject      *source,
 
     if (error != NULL || name_owner == NULL)
     {
-        g_warning ("Couldn't call Modify on the PackageKit interface: %s",
-                   error != NULL ? error->message : "no owner for PackageKit");
+        g_debug ("Couldn't call Modify on the PackageKit interface: %s",
+                 error != NULL ? error->message : "no owner for PackageKit");
         g_clear_error (&error);
 
         /* show an unhelpful dialog */
@@ -1417,14 +1451,8 @@ static void
 application_unhandled_uri (ActivateParameters *parameters,
                            char               *uri)
 {
-    gboolean show_install_mime;
-    NautilusFile *file;
-    ActivateParametersInstall *parameters_install;
-
-    file = nautilus_file_get_by_uri (uri);
-
     /* copy the parts of parameters we are interested in as the orignal will be unref'd */
-    parameters_install = g_new0 (ActivateParametersInstall, 1);
+    ActivateParametersInstall *parameters_install = g_new0 (ActivateParametersInstall, 1);
     parameters_install->slot = parameters->slot;
     g_object_add_weak_pointer (G_OBJECT (parameters_install->slot), (gpointer *) &parameters_install->slot);
     if (parameters->parent_window)
@@ -1433,44 +1461,28 @@ application_unhandled_uri (ActivateParameters *parameters,
         g_object_add_weak_pointer (G_OBJECT (parameters_install->parent_window), (gpointer *) &parameters_install->parent_window);
     }
     parameters_install->activation_directory = g_strdup (parameters->activation_directory);
-    parameters_install->file = file;
+    parameters_install->file = nautilus_file_get_by_uri (uri);
     parameters_install->files = get_file_list_for_launch_locations (parameters->locations);
     parameters_install->flags = parameters->flags;
     parameters_install->user_confirmation = parameters->user_confirmation;
 
-#ifdef ENABLE_PACKAGEKIT
-    /* allow an admin to disable the PackageKit search functionality */
-    show_install_mime = g_settings_get_boolean (nautilus_preferences, NAUTILUS_PREFERENCES_INSTALL_MIME_ACTIVATION);
-#else
-    /* we have no install functionality */
-    show_install_mime = FALSE;
-#endif
-    /* There is no use trying to look for handlers of application/octet-stream */
-    if (g_content_type_is_unknown (nautilus_file_get_mime_type (file)))
+    if (!g_content_type_is_unknown (nautilus_file_get_mime_type (parameters_install->file)))
     {
-        show_install_mime = FALSE;
+        g_dbus_proxy_new_for_bus (G_BUS_TYPE_SESSION,
+                                  G_DBUS_PROXY_FLAGS_DO_NOT_AUTO_START,
+                                  NULL,
+                                  "org.freedesktop.PackageKit",
+                                  "/org/freedesktop/PackageKit",
+                                  "org.freedesktop.PackageKit.Modify2",
+                                  NULL,
+                                  pk_proxy_appeared_cb,
+                                  parameters_install);
     }
-
-    if (!show_install_mime)
+    else
     {
-        goto out;
+        /* Don't look for handlers of unknown types, i.e. application/octet-stream */
+        show_unhandled_type_error (parameters_install);
     }
-
-    g_dbus_proxy_new_for_bus (G_BUS_TYPE_SESSION,
-                              G_DBUS_PROXY_FLAGS_NONE,
-                              NULL,
-                              "org.freedesktop.PackageKit",
-                              "/org/freedesktop/PackageKit",
-                              "org.freedesktop.PackageKit.Modify2",
-                              NULL,
-                              pk_proxy_appeared_cb,
-                              parameters_install);
-
-    return;
-
-out:
-    /* show an unhelpful dialog */
-    show_unhandled_type_error (parameters_install);
 }
 
 static void
@@ -1794,10 +1806,9 @@ activation_mount_not_mounted_callback (GObject      *source_object,
              error->code != G_IO_ERROR_FAILED_HANDLED &&
              error->code != G_IO_ERROR_ALREADY_MOUNTED))
         {
-            show_dialog (_("Unable to access location"),
-                         error->message,
-                         parameters->parent_window,
-                         GTK_MESSAGE_ERROR);
+            nautilus_show_ok_dialog (_("Unable to access location"),
+                                     error->message,
+                                     GTK_WIDGET (parameters->parent_window));
         }
 
         if (error->domain != G_IO_ERROR ||
@@ -2093,10 +2104,9 @@ activation_mountable_mounted (NautilusFile *file,
              error->code != G_IO_ERROR_FAILED_HANDLED &&
              error->code != G_IO_ERROR_ALREADY_MOUNTED))
         {
-            show_dialog (_("Unable to access location"),
-                         error->message,
-                         parameters->parent_window,
-                         GTK_MESSAGE_ERROR);
+            nautilus_show_ok_dialog (_("Unable to access location"),
+                                     error->message,
+                                     GTK_WIDGET (parameters->parent_window));
         }
 
         if (error->code == G_IO_ERROR_CANCELLED)
@@ -2184,10 +2194,9 @@ activation_mountable_started (NautilusFile *file,
             (error->code != G_IO_ERROR_CANCELLED &&
              error->code != G_IO_ERROR_FAILED_HANDLED))
         {
-            show_dialog (_("Unable to start location"),
-                         error->message,
-                         parameters->parent_window,
-                         GTK_MESSAGE_ERROR);
+            nautilus_show_ok_dialog (_("Unable to start location"),
+                                     error->message,
+                                     GTK_WIDGET (parameters->parent_window));
         }
 
         if (error->code == G_IO_ERROR_CANCELLED)

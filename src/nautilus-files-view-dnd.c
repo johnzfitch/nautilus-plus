@@ -35,9 +35,6 @@
 #include "nautilus-dnd.h"
 #include "nautilus-ui-utilities.h"
 
-#define GET_ANCESTOR(obj) \
-        GTK_WINDOW (gtk_widget_get_ancestor (GTK_WIDGET (obj), GTK_TYPE_WINDOW))
-
 #define MAX_LEN_FILENAME 64
 #define MIN_LEN_FILENAME 8
 
@@ -183,10 +180,9 @@ nautilus_files_view_drop_proxy_received_uris (NautilusFilesView *view,
         (action != GDK_ACTION_MOVE) &&
         (action != GDK_ACTION_LINK))
     {
-        show_dialog (_("Drag and drop is not supported."),
-                     _("An invalid drag type was used."),
-                     GET_ANCESTOR (view),
-                     GTK_MESSAGE_WARNING);
+        nautilus_show_ok_dialog (_("Drag and drop is not supported."),
+                                 _("An invalid drag type was used."),
+                                 GTK_WIDGET (view));
         return;
     }
 
