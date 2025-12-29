@@ -24,7 +24,6 @@
 #include "nautilus-search-engine-localsearch.h"
 
 #include "nautilus-file.h"
-#include "nautilus-global-preferences.h"
 #include "nautilus-query.h"
 #include "nautilus-search-hit.h"
 #include "nautilus-search-provider.h"
@@ -59,11 +58,6 @@ struct _NautilusSearchEngineLocalsearch
     GQueue *hits_pending;
 
     gboolean fts_enabled;
-
-    /* Result limiting to prevent resource exhaustion */
-    guint results_count;
-    guint max_results;
-    gboolean results_truncated;
 
     GCancellable *cancellable;
 };
@@ -153,15 +147,7 @@ search_finished (NautilusSearchEngineLocalsearch *self,
     }
     else
     {
-        if (self->results_truncated)
-        {
-            g_debug ("Localsearch engine finished with truncated results (%u shown, limit %u)",
-                     self->results_count, self->max_results);
-        }
-        else
-        {
-            g_debug ("Localsearch engine finished correctly with %u results", self->results_count);
-        }
+        g_debug ("Tracker engine finished correctly");
     }
 
     nautilus_search_provider_finished (NAUTILUS_SEARCH_PROVIDER (self));
@@ -288,20 +274,6 @@ cursor_callback (GObject      *object,
 
     g_queue_push_head (self->hits_pending, hit);
     check_pending_hits (self, FALSE);
-
-    self->results_count++;
-
-    /* Check if we've hit the result limit */
-    if (self->max_results > 0 && self->results_count >= self->max_results)
-    {
-        self->results_truncated = TRUE;
-        g_debug ("Localsearch engine: reached result limit (%u), stopping", self->max_results);
-
-        search_finished (self, NULL);
-        tracker_sparql_cursor_close (cursor);
-        g_clear_object (&cursor);
-        return;
-    }
 
     /* Get next */
     cursor_next (self, cursor);
@@ -502,20 +474,6 @@ search_engine_localsearch_start (NautilusSearchProvider *provider,
     g_debug ("Tracker engine start");
     g_object_ref (self);
     self->query_pending = TRUE;
-
-    /* Initialize result limiting - use query limit if set, otherwise GSettings */
-    self->results_count = 0;
-    self->results_truncated = FALSE;
-    guint query_limit = nautilus_query_get_max_results (self->query);
-    if (query_limit > 0)
-    {
-        self->max_results = query_limit;
-    }
-    else
-    {
-        self->max_results = g_settings_get_uint (nautilus_preferences,
-                                                 NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT);
-    }
 
     g_autoptr (GFile) location = nautilus_query_get_location (self->query);
 
