@@ -15,6 +15,8 @@
 #include "nautilus-ui-utilities.h"
 #include "nautilus-view-item.h"
 #include "nautilus-view-cell.h"
+#include "nautilus-animated-thumbnail.h"
+#include "nautilus-animated-paintable.h"
 
 struct _NautilusGridCell
 {
