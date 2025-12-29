@@ -3,7 +3,6 @@
 #include "nautilus-directory.h"
 #include "nautilus-file.h"
 #include "nautilus-global-preferences.h"
-#include "nautilus-thumbnails.h"
 #include "nautilus-view-item.h"
 
 /**
