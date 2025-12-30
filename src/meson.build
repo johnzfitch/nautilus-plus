@@ -34,14 +34,6 @@ libnautilus_sources = [
     namespace: 'NautilusFreedesktop'
   ),
   gnome.gdbus_codegen(
-    'nautilus-generated',
-    join_paths(
-      meson.project_source_root(), 'data', 'dbus-interfaces.xml'
-    ),
-    interface_prefix: 'org.gnome.Nautilus',
-    namespace: 'NautilusDBus'
-  ),
-  gnome.gdbus_codegen(
     'nautilus-generated2',
     join_paths(
       meson.project_source_root(), 'data', 'dbus-interfaces2.xml'
@@ -121,7 +113,6 @@ libnautilus_sources = [
   'nautilus-file-undo-operations.c',
   'nautilus-file-undo-operations.h',
   'nautilus-file-utilities.c',
-  'nautilus-file-utilities-fuse.c',
   'nautilus-file-utilities.h',
   'nautilus-filename-utilities.c',
   'nautilus-filename-utilities.h',
@@ -236,8 +227,6 @@ libnautilus_sources = [
   'nautilus-search-engine-recent.h',
   'nautilus-search-engine-simple.c',
   'nautilus-search-engine-simple.h',
-  'nautilus-search-engine-searchcache.c',
-  'nautilus-search-engine-searchcache.h',
   'nautilus-search-hit.c',
   'nautilus-search-hit.h',
   'nautilus-search-popover.c',
@@ -261,10 +250,6 @@ libnautilus_sources = [
   'nautilus-tag-manager.h',
   'nautilus-thumbnails.c',
   'nautilus-thumbnails.h',
-  'nautilus-animated-thumbnail.c',
-  'nautilus-animated-thumbnail.h',
-  'nautilus-animated-paintable.c',
-  'nautilus-animated-paintable.h',
   'nautilus-toolbar.c',
   'nautilus-toolbar.h',
   'nautilus-toolbar-menu-sections.h',
