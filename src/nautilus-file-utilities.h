@@ -129,9 +129,6 @@ GList * nautilus_file_list_from_uri_list (GList *uris);
 gboolean check_schema_available (const gchar *schema_id);
 gboolean is_external_volume (GVolume *volume);
 
-GList *
-nautilus_location_list_from_file_list (GList *files);
-
 /**
  * nautilus_file_check_fuse_mount_responsive:
  * @file: A #GFile to check
@@ -154,3 +151,6 @@ gboolean nautilus_file_check_fuse_mount_responsive (GFile *file,
  * Returns: %TRUE if on a FUSE mount, %FALSE otherwise
  */
 gboolean nautilus_file_is_on_fuse_mount (GFile *file);
+
+GList *
+nautilus_location_list_from_file_list (GList *files);

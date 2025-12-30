@@ -36,7 +36,6 @@ struct _NautilusGridCell
     /* Animation support */
     NautilusAnimatedPaintable *animated_paintable;
     gboolean is_animated;
-    gboolean animation_playing;
 
     gboolean in_file_change;
 };

@@ -34,14 +34,6 @@ libnautilus_sources = [
     namespace: 'NautilusFreedesktop'
   ),
   gnome.gdbus_codegen(
-    'nautilus-generated',
-    join_paths(
-      meson.project_source_root(), 'data', 'dbus-interfaces.xml'
-    ),
-    interface_prefix: 'org.gnome.Nautilus',
-    namespace: 'NautilusDBus'
-  ),
-  gnome.gdbus_codegen(
     'nautilus-generated2',
     join_paths(
       meson.project_source_root(), 'data', 'dbus-interfaces2.xml'
@@ -121,8 +113,8 @@ libnautilus_sources = [
   'nautilus-file-undo-operations.c',
   'nautilus-file-undo-operations.h',
   'nautilus-file-utilities.c',
-  'nautilus-file-utilities-fuse.c',
   'nautilus-file-utilities.h',
+  'nautilus-file-utilities-fuse.c',
   'nautilus-filename-utilities.c',
   'nautilus-filename-utilities.h',
   'nautilus-filename-validator.c',
