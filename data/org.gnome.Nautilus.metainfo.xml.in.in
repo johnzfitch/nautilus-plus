@@ -50,7 +50,6 @@
     <dbus type="user">org.freedesktop.FileManager1</dbus>
     <dbus type="user">org.freedesktop.impl.portal.Request</dbus>
     <dbus type="user">org.freedesktop.impl.portal.FileChooser</dbus>
-    <dbus type="user">org.gnome.Nautilus.FileOperations</dbus>
     <dbus type="user">org.gnome.Nautilus.FileOperations2</dbus>
     <dbus type="user">org.gnome.Shell.SearchProvider2</dbus>
   </provides>
@@ -83,13 +82,11 @@
     <kudo>Notifications</kudo>
     <kudo>SearchProvider</kudo>
   </kudos>
-  <recommends>
-    <control>keyboard</control>
-    <control>pointing</control>
-  </recommends>
   <supports>
     <control>touch</control>
     <control>tablet</control>
+    <control>keyboard</control>
+    <control>pointing</control>
     <internet>offline-only</internet>
   </supports>
   <requires>
