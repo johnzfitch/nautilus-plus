@@ -1811,15 +1811,11 @@ nautilus_window_slot_display_view_selection_failure (GtkWindow    *window,
                                                      GFile        *location,
                                                      GError       *error)
 {
-    char *error_message;
-    char *detail_message;
-    char *scheme_string;
-    char *file_path;
+    const char *error_message = _("Oops! Something went wrong.");
+    g_autofree char *detail_message = NULL;
 
     /* Some sort of failure occurred. How 'bout we tell the user? */
 
-    error_message = g_strdup (_("Oops! Something went wrong."));
-    detail_message = NULL;
     if (error == NULL)
     {
         if (nautilus_file_is_directory (file))
@@ -1837,7 +1833,8 @@ nautilus_window_slot_display_view_selection_failure (GtkWindow    *window,
         {
             case G_IO_ERROR_NOT_FOUND:
             {
-                file_path = g_file_get_path (location);
+                g_autofree char *file_path = g_file_get_path (location);
+
                 if (file_path != NULL)
                 {
                     detail_message = g_strdup_printf (_("Unable to find “%s”. Please check the spelling and try again."),
@@ -1847,13 +1844,13 @@ nautilus_window_slot_display_view_selection_failure (GtkWindow    *window,
                 {
                     detail_message = g_strdup (_("Unable to find the requested file. Please check the spelling and try again."));
                 }
-                g_free (file_path);
             }
             break;
 
             case G_IO_ERROR_NOT_SUPPORTED:
             {
-                scheme_string = g_file_get_uri_scheme (location);
+                g_autofree char *scheme_string = g_file_get_uri_scheme (location);
+
                 if (scheme_string != NULL)
                 {
                     detail_message = g_strdup_printf (_("“%s” locations are not supported."),
@@ -1863,7 +1860,6 @@ nautilus_window_slot_display_view_selection_failure (GtkWindow    *window,
                 {
                     detail_message = g_strdup (_("Unable to handle this kind of location."));
                 }
-                g_free (scheme_string);
             }
             break;
 
@@ -1902,11 +1898,12 @@ nautilus_window_slot_display_view_selection_failure (GtkWindow    *window,
             case G_IO_ERROR_CANCELLED:
             case G_IO_ERROR_FAILED_HANDLED:
             {
-                goto done;
+                return;
             }
 
             default:
             {
+                detail_message = g_strdup_printf (_("Unhandled error message: %s"), error->message);
             }
             break;
         }
@@ -1918,10 +1915,6 @@ nautilus_window_slot_display_view_selection_failure (GtkWindow    *window,
     }
 
     nautilus_show_ok_dialog (error_message, detail_message, GTK_WIDGET (window));
-
-done:
-    g_free (error_message);
-    g_free (detail_message);
 }
 
 /* FIXME: This works in the folowwing way. begin_location_change tries to get the
@@ -2027,35 +2020,29 @@ static void
 got_file_info_for_view_selection_callback (NautilusFile *file,
                                            gpointer      callback_data)
 {
-    GError *error = NULL;
-    NautilusWindowSlot *self;
-    GFile *location;
-
-    self = callback_data;
+    g_autoptr (NautilusFile) ready_file = file;
+    g_autoptr (GError) error = NULL;
+    NautilusWindowSlot *self = callback_data;
 
     g_assert (self->determine_view_file == file);
     self->determine_view_file = NULL;
 
-    if (handle_mount_if_needed (self, file))
+    if (handle_mount_if_needed (self, ready_file) ||
+        handle_regular_file_if_needed (self, ready_file))
     {
-        goto done;
-    }
-
-    if (handle_regular_file_if_needed (self, file))
-    {
-        goto done;
+        return;
     }
 
     if (self->mount_error)
     {
         error = g_error_copy (self->mount_error);
     }
-    else if (nautilus_file_get_file_info_error (file) != NULL)
+    else if (nautilus_file_get_file_info_error (ready_file) != NULL)
     {
-        error = g_error_copy (nautilus_file_get_file_info_error (file));
+        error = g_error_copy (nautilus_file_get_file_info_error (ready_file));
     }
 
-    location = self->pending_location;
+    GFile *location = self->pending_location;
 
     if (error == NULL)
     {
@@ -2087,7 +2074,7 @@ got_file_info_for_view_selection_callback (NautilusFile *file,
         GtkWindow *window = GTK_WINDOW (gtk_widget_get_root (GTK_WIDGET (self)));
 
         nautilus_window_slot_display_view_selection_failure (window,
-                                                             file,
+                                                             ready_file,
                                                              location,
                                                              error);
 
@@ -2135,11 +2122,6 @@ got_file_info_for_view_selection_callback (NautilusFile *file,
              */
         }
     }
-
-done:
-    g_clear_error (&error);
-
-    nautilus_file_unref (file);
 }
 
 static void
@@ -2521,6 +2503,16 @@ typedef struct
 } FindMountData;
 
 static void
+clear_find_mount_data (FindMountData *data)
+{
+    g_clear_pointer (&data->mount, g_object_unref);
+    g_object_unref (data->cancellable);
+    g_free (data);
+}
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (FindMountData, clear_find_mount_data)
+
+static void
 nautilus_window_slot_show_x_content_bar (NautilusWindowSlot *self,
                                          GMount             *mount,
                                          const char * const *x_content_types)
@@ -2542,14 +2534,14 @@ static void
 found_content_type_cb (const char **x_content_types,
                        gpointer     user_data)
 {
-    NautilusWindowSlot *self;
-    FindMountData *data = user_data;
-    self = data->slot;
+    g_autoptr (FindMountData) data = user_data;
+
     if (g_cancellable_is_cancelled (data->cancellable))
     {
-        goto out;
+        return;
     }
 
+    NautilusWindowSlot *self = data->slot;
 
     if (x_content_types != NULL && x_content_types[0] != NULL)
     {
@@ -2557,11 +2549,6 @@ found_content_type_cb (const char **x_content_types,
     }
 
     self->find_mount_cancellable = NULL;
-
-out:
-    g_object_unref (data->mount);
-    g_object_unref (data->cancellable);
-    g_free (data);
 }
 
 static void
@@ -2569,34 +2556,30 @@ found_mount_cb (GObject      *source_object,
                 GAsyncResult *res,
                 gpointer      user_data)
 {
-    FindMountData *data = user_data;
-    NautilusWindowSlot *self;
-    GMount *mount;
+    g_autoptr (FindMountData) data = user_data;
 
     if (g_cancellable_is_cancelled (data->cancellable))
     {
-        goto out;
-    }
-    self = NAUTILUS_WINDOW_SLOT (data->slot);
-
-    mount = g_file_find_enclosing_mount_finish (G_FILE (source_object),
-                                                res,
-                                                NULL);
-    if (mount != NULL)
-    {
-        data->mount = mount;
-        nautilus_get_x_content_types_for_mount_async (mount,
-                                                      found_content_type_cb,
-                                                      data->cancellable,
-                                                      data);
         return;
     }
 
-    self->find_mount_cancellable = NULL;
+    data->mount = g_file_find_enclosing_mount_finish (G_FILE (source_object),
+                                                      res,
+                                                      NULL);
+    if (data->mount != NULL)
+    {
+        FindMountData *passed_on = g_steal_pointer (&data);
+        nautilus_get_x_content_types_for_mount_async (passed_on->mount,
+                                                      found_content_type_cb,
+                                                      passed_on->cancellable,
+                                                      passed_on);
+    }
+    else
+    {
+        NautilusWindowSlot *self = NAUTILUS_WINDOW_SLOT (data->slot);
 
-out:
-    g_object_unref (data->cancellable);
-    g_free (data);
+        self->find_mount_cancellable = NULL;
+    }
 }
 
 static void

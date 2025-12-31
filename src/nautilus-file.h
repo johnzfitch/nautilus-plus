@@ -407,8 +407,6 @@ gboolean                nautilus_file_is_hidden_file                    (Nautilu
 gboolean                nautilus_file_should_show                       (NautilusFile                   *file,
 									 gboolean                        show_hidden);
 void                    nautilus_file_prioritize                        (NautilusFile                   *file);
-GList                  *nautilus_file_list_filter_hidden                (GList                          *files,
-									 gboolean                        show_hidden);
 
 
 /* Get the URI that's used when activating the file.
@@ -452,10 +450,10 @@ void                    nautilus_file_list_call_when_ready              (GList  
 									 gpointer                        callback_data);
 void                    nautilus_file_list_cancel_call_when_ready       (NautilusFileListHandle         *handle);
 
-GList *                 nautilus_file_list_filter                       (GList                          *files,
-                                                                         GList                         **failed,
+NautilusFileList *      nautilus_file_list_filter                       (NautilusFileList               *file_list,
                                                                          NautilusFileFilterFunc          filter_function,
                                                                          gpointer                        user_data);
+
 gboolean                nautilus_file_list_are_all_folders              (const GList                    *files);
 
 /* Debugging */
