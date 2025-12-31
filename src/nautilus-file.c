@@ -1096,183 +1096,92 @@ nautilus_file_can_eject (NautilusFile *file)
             g_mount_can_eject (file->details->mount));
 }
 
-gboolean
-nautilus_file_can_start (NautilusFile *file)
+typedef gboolean (*DriveCheckFunc) (GDrive *);
+
+static gboolean
+can_mount_do (NautilusFile   *file,
+              DriveCheckFunc  drive_check_func)
 {
-    gboolean ret;
-    GDrive *drive;
-
-    g_return_val_if_fail (NAUTILUS_IS_FILE (file), FALSE);
-
-    ret = FALSE;
-
-    if (file->details->can_start)
-    {
-        ret = TRUE;
-        goto out;
-    }
-
     if (file->details->mount != NULL)
     {
-        drive = g_mount_get_drive (file->details->mount);
+        g_autoptr (GDrive) drive = g_mount_get_drive (file->details->mount);
+
         if (drive != NULL)
         {
-            ret = g_drive_can_start (drive);
-            g_object_unref (drive);
+            return drive_check_func (drive);
         }
     }
 
-out:
-    return ret;
+    return FALSE;
+}
+
+gboolean
+nautilus_file_can_start (NautilusFile *file)
+{
+    g_return_val_if_fail (NAUTILUS_IS_FILE (file), FALSE);
+
+    return file->details->can_start ||
+           can_mount_do (file, g_drive_can_start);
 }
 
 gboolean
 nautilus_file_can_start_degraded (NautilusFile *file)
 {
-    gboolean ret;
-    GDrive *drive;
-
     g_return_val_if_fail (NAUTILUS_IS_FILE (file), FALSE);
 
-    ret = FALSE;
-
-    if (file->details->can_start_degraded)
-    {
-        ret = TRUE;
-        goto out;
-    }
-
-    if (file->details->mount != NULL)
-    {
-        drive = g_mount_get_drive (file->details->mount);
-        if (drive != NULL)
-        {
-            ret = g_drive_can_start_degraded (drive);
-            g_object_unref (drive);
-        }
-    }
-
-out:
-    return ret;
+    return file->details->can_start_degraded ||
+           can_mount_do (file, g_drive_can_start_degraded);
 }
 
 gboolean
 nautilus_file_can_poll_for_media (NautilusFile *file)
 {
-    gboolean ret;
-    GDrive *drive;
-
     g_return_val_if_fail (NAUTILUS_IS_FILE (file), FALSE);
 
-    ret = FALSE;
-
-    if (file->details->can_poll_for_media)
-    {
-        ret = TRUE;
-        goto out;
-    }
-
-    if (file->details->mount != NULL)
-    {
-        drive = g_mount_get_drive (file->details->mount);
-        if (drive != NULL)
-        {
-            ret = g_drive_can_poll_for_media (drive);
-            g_object_unref (drive);
-        }
-    }
-
-out:
-    return ret;
+    return file->details->can_poll_for_media ||
+           can_mount_do (file, g_drive_can_poll_for_media);
 }
 
 gboolean
 nautilus_file_is_media_check_automatic (NautilusFile *file)
 {
-    gboolean ret;
-    GDrive *drive;
-
     g_return_val_if_fail (NAUTILUS_IS_FILE (file), FALSE);
 
-    ret = FALSE;
-
-    if (file->details->is_media_check_automatic)
-    {
-        ret = TRUE;
-        goto out;
-    }
-
-    if (file->details->mount != NULL)
-    {
-        drive = g_mount_get_drive (file->details->mount);
-        if (drive != NULL)
-        {
-            ret = g_drive_is_media_check_automatic (drive);
-            g_object_unref (drive);
-        }
-    }
-
-out:
-    return ret;
+    return file->details->is_media_check_automatic ||
+           can_mount_do (file, g_drive_is_media_check_automatic);
 }
 
 
 gboolean
 nautilus_file_can_stop (NautilusFile *file)
 {
-    gboolean ret;
-    GDrive *drive;
-
     g_return_val_if_fail (NAUTILUS_IS_FILE (file), FALSE);
 
-    ret = FALSE;
-
-    if (file->details->can_stop)
-    {
-        ret = TRUE;
-        goto out;
-    }
-
-    if (file->details->mount != NULL)
-    {
-        drive = g_mount_get_drive (file->details->mount);
-        if (drive != NULL)
-        {
-            ret = g_drive_can_stop (drive);
-            g_object_unref (drive);
-        }
-    }
-
-out:
-    return ret;
+    return file->details->can_stop ||
+           can_mount_do (file, g_drive_can_stop);
 }
 
 GDriveStartStopType
 nautilus_file_get_start_stop_type (NautilusFile *file)
 {
-    GDriveStartStopType ret;
-    GDrive *drive;
+    g_return_val_if_fail (NAUTILUS_IS_FILE (file), G_DRIVE_START_STOP_TYPE_UNKNOWN);
 
-    g_return_val_if_fail (NAUTILUS_IS_FILE (file), FALSE);
-
-    ret = file->details->start_stop_type;
-    if (ret != G_DRIVE_START_STOP_TYPE_UNKNOWN)
+    if (file->details->start_stop_type != G_DRIVE_START_STOP_TYPE_UNKNOWN)
     {
-        goto out;
+        return file->details->start_stop_type;
     }
 
     if (file->details->mount != NULL)
     {
-        drive = g_mount_get_drive (file->details->mount);
+        g_autoptr (GDrive) drive = g_mount_get_drive (file->details->mount);
+
         if (drive != NULL)
         {
-            ret = g_drive_get_start_stop_type (drive);
-            g_object_unref (drive);
+            return g_drive_get_start_stop_type (drive);
         }
     }
 
-out:
-    return ret;
+    return G_DRIVE_START_STOP_TYPE_UNKNOWN;
 }
 
 void
@@ -1503,9 +1412,8 @@ nautilus_file_stop (NautilusFile                  *file,
     }
     else
     {
-        GDrive *drive;
+        g_autoptr (GDrive) drive = NULL;
 
-        drive = NULL;
         if (file->details->mount != NULL)
         {
             drive = g_mount_get_drive (file->details->mount);
@@ -1540,11 +1448,6 @@ nautilus_file_stop (NautilusFile                  *file,
                 g_error_free (error);
             }
         }
-
-        if (drive != NULL)
-        {
-            g_object_unref (drive);
-        }
     }
 }
 
@@ -1560,15 +1463,14 @@ nautilus_file_poll_for_media (NautilusFile *file)
     }
     else if (file->details->mount != NULL)
     {
-        GDrive *drive;
-        drive = g_mount_get_drive (file->details->mount);
+        g_autoptr (GDrive) drive = g_mount_get_drive (file->details->mount);
+
         if (drive != NULL)
         {
             g_drive_poll_for_media (drive,
                                     NULL,              /* cancellable */
                                     NULL,              /* GAsyncReadyCallback */
                                     NULL);             /* user_data */
-            g_object_unref (drive);
         }
     }
 }
@@ -4125,70 +4027,37 @@ nautilus_file_is_in_search (NautilusFile *file)
     return g_file_has_uri_scheme (location, SCHEME_SEARCH);
 }
 
-static gboolean
-filter_hidden_partition_callback (NautilusFile *file,
-                                  gpointer      callback_data)
-{
-    FilterOptions options;
-
-    options = GPOINTER_TO_INT (callback_data);
-
-    return nautilus_file_should_show (file,
-                                      options & SHOW_HIDDEN);
-}
-
-GList *
-nautilus_file_list_filter_hidden (GList    *files,
-                                  gboolean  show_hidden)
-{
-    GList *filtered_files;
-    GList *removed_files;
-
-    /* FIXME bugzilla.gnome.org 40653:
-     * Eventually this should become a generic filtering thingy.
-     */
-
-    filtered_files = nautilus_file_list_filter (files,
-                                                &removed_files,
-                                                filter_hidden_partition_callback,
-                                                GINT_TO_POINTER ((show_hidden ? SHOW_HIDDEN : 0)));
-    nautilus_file_list_free (removed_files);
-
-    return filtered_files;
-}
-
-/* This functions filters a file list when its items match a certain condition
- * in the filter function. This function preserves the ordering.
+/**
+ * nautilus_file_list_filter
+ * @file_list: (transfer full): A list of files to filter
+ * @filter_function: Function that decides which items to keep in list
+ * @user_data: Passed as is to @filter_function
+ *
+ * Removes and frees all files from the given list that don't pass the given
+ * filter function.
+ *
+ * Returns: (transfer full): the filtered file list
  */
-GList *
-nautilus_file_list_filter (GList                   *files,
-                           GList                  **failed,
-                           NautilusFileFilterFunc   filter_function,
-                           gpointer                 user_data)
+NautilusFileList *
+nautilus_file_list_filter (NautilusFileList       *file_list,
+                           NautilusFileFilterFunc  filter_function,
+                           gpointer                user_data)
 {
-    GList *filtered = NULL;
-    GList *l;
-    GList *reversed;
+    GList *next = NULL;
 
-    *failed = NULL;
-
-    reversed = g_list_copy (files);
-    reversed = g_list_reverse (reversed);
-    for (l = reversed; l != NULL; l = l->next)
+    for (NautilusFileList *node = file_list; node != NULL; node = next)
     {
-        if (filter_function (l->data, user_data))
+        NautilusFile *file = node->data;
+        next = node->next;
+
+        if (!filter_function (file, user_data))
         {
-            filtered = g_list_prepend (filtered, nautilus_file_ref (l->data));
-        }
-        else
-        {
-            *failed = g_list_prepend (*failed, nautilus_file_ref (l->data));
+            nautilus_file_unref (file);
+            file_list = g_list_delete_link (file_list, node);
         }
     }
 
-    g_list_free (reversed);
-
-    return filtered;
+    return file_list;
 }
 
 gboolean
@@ -4882,41 +4751,28 @@ GIcon *
 nautilus_file_get_gicon (NautilusFile          *file,
                          NautilusFileIconFlags  flags)
 {
-    GIcon *icon;
-
     if (file == NULL)
     {
         return NULL;
     }
 
-    icon = get_custom_icon (file);
+    GIcon *icon = get_custom_icon (file);
+
     if (icon != NULL)
     {
         return icon;
     }
-
-    if (flags & NAUTILUS_FILE_ICON_FLAGS_USE_MOUNT_ICON)
+    else if (flags & NAUTILUS_FILE_ICON_FLAGS_USE_MOUNT_ICON &&
+             (icon = get_mount_icon (file, FALSE)) != NULL)
     {
-        icon = get_mount_icon (file, FALSE);
-
-        if (icon != NULL)
-        {
-            goto out;
-        }
+        return icon;
+    }
+    else if (file->details->icon != NULL)
+    {
+        return g_object_ref (file->details->icon);
     }
 
-    if (file->details->icon)
-    {
-        icon = g_object_ref (file->details->icon);
-    }
-
-out:
-    if (icon == NULL)
-    {
-        icon = g_object_ref (get_default_file_icon ());
-    }
-
-    return icon;
+    return g_object_ref (get_default_file_icon ());
 }
 
 const char *

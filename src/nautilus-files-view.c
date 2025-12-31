@@ -1233,6 +1233,25 @@ nautilus_files_view_preview_selection_event (NautilusFilesView *self,
     nautilus_list_base_preview_selection_event (self->list_base, direction);
 }
 
+static gboolean
+activate_or_extract_split (NautilusFile *file,
+                           gpointer      callback_data)
+{
+    if (nautilus_mime_file_extracts (file))
+    {
+        NautilusFileList **extract_list_ptr = callback_data;
+
+        *extract_list_ptr = g_list_prepend (*extract_list_ptr,
+                                            nautilus_file_ref (file));
+
+        return FALSE;
+    }
+    else
+    {
+        return TRUE;
+    }
+}
+
 static void
 nautilus_files_view_activate_files (NautilusFilesView *view,
                                     GList             *files,
@@ -1244,8 +1263,6 @@ nautilus_files_view_activate_files (NautilusFilesView *view,
         return;
     }
 
-    GList *files_to_extract;
-    GList *files_to_activate;
     char *path;
 
     if (files == NULL)
@@ -1253,10 +1270,13 @@ nautilus_files_view_activate_files (NautilusFilesView *view,
         return;
     }
 
-    files_to_extract = nautilus_file_list_filter (files,
-                                                  &files_to_activate,
-                                                  (NautilusFileFilterFunc) nautilus_mime_file_extracts,
-                                                  NULL);
+    g_autolist (NautilusFile) files_to_extract = NULL;
+    g_autolist (NautilusFile) files_to_activate = nautilus_file_list_copy (files);
+
+    files_to_activate = nautilus_file_list_filter (files_to_activate,
+                                                   activate_or_extract_split,
+                                                   &files_to_extract);
+    files_to_extract = g_list_reverse (files_to_extract);
 
     if (nautilus_files_view_supports_extract_here (view))
     {
@@ -1285,8 +1305,6 @@ nautilus_files_view_activate_files (NautilusFilesView *view,
                                   confirm_multiple);
 
     g_free (path);
-    g_list_free (files_to_extract);
-    g_list_free (files_to_activate);
 }
 
 void
@@ -1804,6 +1822,17 @@ typedef struct
     NautilusFileList *selection;
 } NewFolderData;
 
+static void
+clear_new_folder_data (NewFolderData *data)
+{
+    g_hash_table_destroy (data->added_locations);
+    g_clear_weak_pointer (&data->directory_view);
+    nautilus_file_list_free (data->selection);
+    g_free (data);
+}
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (NewFolderData, clear_new_folder_data)
+
 typedef struct
 {
     NautilusFilesView *directory_view;
@@ -1839,16 +1868,13 @@ new_folder_done (GFile    *new_folder,
                  gpointer  user_data)
 {
     NautilusFilesView *directory_view;
-    NautilusFile *file;
-    NewFolderData *data;
-
-    data = (NewFolderData *) user_data;
+    g_autoptr (NewFolderData) data = user_data;
 
     directory_view = data->directory_view;
 
     if (directory_view == NULL)
     {
-        goto fail;
+        return;
     }
 
     g_signal_handlers_disconnect_by_func (directory_view,
@@ -1857,10 +1883,10 @@ new_folder_done (GFile    *new_folder,
 
     if (new_folder == NULL)
     {
-        goto fail;
+        return;
     }
 
-    file = nautilus_file_get (new_folder);
+    g_autoptr (NautilusFile) file = nautilus_file_get (new_folder);
 
     if (data->selection != NULL)
     {
@@ -1894,20 +1920,6 @@ new_folder_done (GFile    *new_folder,
     {
         g_hash_table_add (directory_view->pending_reveal, file);
     }
-
-    nautilus_file_unref (file);
-
-fail:
-    g_hash_table_destroy (data->added_locations);
-
-    if (data->directory_view != NULL)
-    {
-        g_object_remove_weak_pointer (G_OBJECT (data->directory_view),
-                                      (gpointer *) &data->directory_view);
-    }
-
-    nautilus_file_list_free (data->selection);
-    g_free (data);
 }
 
 
@@ -2063,21 +2075,30 @@ typedef struct
 } CompressData;
 
 static void
+clear_compress_data (CompressData *data)
+{
+    g_hash_table_destroy (data->added_locations);
+    g_clear_weak_pointer (&data->view);
+    g_free (data);
+}
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (CompressData, clear_compress_data)
+
+static void
 compress_done (GFile    *new_file,
                gboolean  success,
                gpointer  user_data)
 {
-    CompressData *data;
+    g_autoptr (CompressData) data = user_data;
     NautilusFilesView *view;
     NautilusFile *file;
-    char *uri = NULL;
+    g_autofree char *uri = NULL;
 
-    data = user_data;
     view = data->view;
 
     if (view == NULL)
     {
-        goto out;
+        return;
     }
 
     g_signal_handlers_disconnect_by_func (view,
@@ -2086,7 +2107,7 @@ compress_done (GFile    *new_file,
 
     if (!success)
     {
-        goto out;
+        return;
     }
 
     file = nautilus_file_get (new_file);
@@ -2105,17 +2126,6 @@ compress_done (GFile    *new_file,
     gtk_recent_manager_add_item (gtk_recent_manager_get_default (), uri);
 
     nautilus_file_unref (file);
-out:
-    g_hash_table_destroy (data->added_locations);
-
-    if (data->view != NULL)
-    {
-        g_object_remove_weak_pointer (G_OBJECT (data->view),
-                                      (gpointer *) &data->view);
-    }
-
-    g_free (uri);
-    g_free (data);
 }
 
 static void
@@ -3850,21 +3860,19 @@ pre_copy_move (NautilusFilesView *directory_view)
     return copy_move_done_data;
 }
 
-/* This function is used to pull out any debuting uris that were added
- * and (as a side effect) remove them from the debuting uri hash table.
+/* This function is used to tell apart debuting uris that were added and
+ * completely new uris. As a side effect added debuting uri are removed
+ * from the debuting uri hash table.
  */
 static gboolean
-copy_move_done_partition_func (NautilusFile *file,
-                               gpointer      callback_data)
+copy_move_done_was_not_debuting (NautilusFile *added_file,
+                                 gpointer      callback_data)
 {
-    GFile *location;
-    gboolean result;
+    GHashTable *debuting_files = callback_data;
+    g_autoptr (GFile) location = nautilus_file_get_location (added_file);
+    gboolean was_debuting = g_hash_table_remove (debuting_files, location);
 
-    location = nautilus_file_get_location (file);
-    result = g_hash_table_remove ((GHashTable *) callback_data, location);
-    g_object_unref (location);
-
-    return result;
+    return !was_debuting;
 }
 
 static gboolean
@@ -3903,7 +3911,6 @@ copy_move_done_callback (GHashTable *debuting_files,
     NautilusFilesView *directory_view;
     CopyMoveDoneData *copy_move_done_data;
     DebutingFilesData *debuting_files_data;
-    GList *failed_files;
 
     copy_move_done_data = (CopyMoveDoneData *) data;
     directory_view = copy_move_done_data->directory_view;
@@ -3914,12 +3921,12 @@ copy_move_done_callback (GHashTable *debuting_files,
 
         debuting_files_data = g_new (DebutingFilesData, 1);
         debuting_files_data->debuting_files = g_hash_table_ref (debuting_files);
-        debuting_files_data->added_files = nautilus_file_list_filter (copy_move_done_data->added_files,
-                                                                      &failed_files,
-                                                                      copy_move_done_partition_func,
-                                                                      debuting_files);
-        nautilus_file_list_free (copy_move_done_data->added_files);
-        copy_move_done_data->added_files = failed_files;
+        NautilusFileList *added_files = nautilus_file_list_copy (copy_move_done_data->added_files);
+
+        added_files = nautilus_file_list_filter (added_files,
+                                                 copy_move_done_was_not_debuting,
+                                                 debuting_files);
+        debuting_files_data->added_files = added_files;
 
         /* We're passed the same data used by pre_copy_move_add_files_callback, so disconnecting
          * it will free data. We've already siphoned off the added_files we need, and stashed the
@@ -5236,11 +5243,17 @@ nautilus_load_custom_accel_for_scripts (void)
     g_free (path);
 }
 
+static gboolean
+filter_hidden_scripts (NautilusFile *file,
+                       gpointer      callback_data)
+{
+    return nautilus_file_should_show (file, FALSE);
+}
+
 static GMenu *
 update_directory_in_scripts_menu (NautilusFilesView *view,
                                   NautilusDirectory *directory)
 {
-    GList *file_list, *filtered, *node;
     GMenu *menu, *children_menu;
     GMenuItem *menu_item;
     gboolean any_scripts;
@@ -5259,16 +5272,18 @@ update_directory_in_scripts_menu (NautilusFilesView *view,
         nautilus_load_custom_accel_for_scripts ();
     }
 
-    file_list = nautilus_directory_get_file_list (directory);
-    filtered = nautilus_file_list_filter_hidden (file_list, FALSE);
-    nautilus_file_list_free (file_list);
-    menu = g_menu_new ();
+    g_autolist (NautilusFile) file_list = nautilus_directory_get_file_list (directory);
 
-    filtered = nautilus_file_list_sort_by_display_name (filtered);
+    file_list = nautilus_file_list_filter (file_list, filter_hidden_scripts, NULL);
+    file_list = nautilus_file_list_sort_by_display_name (file_list);
+
+    menu = g_menu_new ();
 
     num = 0;
     any_scripts = FALSE;
-    for (node = filtered; num < TEMPLATE_LIMIT && node != NULL; node = node->next, num++)
+    for (NautilusFileList *node = file_list;
+         num < TEMPLATE_LIMIT && node != NULL;
+         node = node->next, num++)
     {
         file = node->data;
         if (nautilus_file_is_directory (file))
@@ -5302,8 +5317,6 @@ update_directory_in_scripts_menu (NautilusFilesView *view,
             any_scripts = TRUE;
         }
     }
-
-    nautilus_file_list_free (filtered);
 
     if (!any_scripts)
     {
@@ -5455,11 +5468,16 @@ static gboolean
 filter_templates_callback (NautilusFile *file,
                            gpointer      callback_data)
 {
-    gboolean show_hidden = GPOINTER_TO_INT (callback_data);
+    /*
+     * We want to show hidden files, but not directories. This is a compromise
+     * to allow creating hidden files but to prevent content from .git directory
+     * for example. See https://gitlab.gnome.org/GNOME/nautilus/issues/1413.
+     */
+    NautilusFilesView *view = callback_data;
 
     if (nautilus_file_is_hidden_file (file))
     {
-        if (!show_hidden)
+        if (!view->show_hidden_files)
         {
             return FALSE;
         }
@@ -5473,27 +5491,10 @@ filter_templates_callback (NautilusFile *file,
     return TRUE;
 }
 
-static GList *
-filter_templates (GList    *files,
-                  gboolean  show_hidden)
-{
-    GList *filtered_files;
-    GList *removed_files;
-
-    filtered_files = nautilus_file_list_filter (files,
-                                                &removed_files,
-                                                filter_templates_callback,
-                                                GINT_TO_POINTER (show_hidden));
-    nautilus_file_list_free (removed_files);
-
-    return filtered_files;
-}
-
 static GMenuModel *
 update_directory_in_templates_menu (NautilusFilesView *view,
                                     NautilusDirectory *directory)
 {
-    GList *file_list, *filtered, *node;
     GMenu *menu;
     GMenuItem *menu_item;
     gboolean any_templates;
@@ -5506,24 +5507,17 @@ update_directory_in_templates_menu (NautilusFilesView *view,
     g_return_val_if_fail (NAUTILUS_IS_FILES_VIEW (view), NULL);
     g_return_val_if_fail (NAUTILUS_IS_DIRECTORY (directory), NULL);
 
-    file_list = nautilus_directory_get_file_list (directory);
+    g_autolist (NautilusFile) file_list = nautilus_directory_get_file_list (directory);
 
-    /*
-     * The nautilus_file_list_filter_hidden() function isn't used here, because
-     * we want to show hidden files, but not directories. This is a compromise
-     * to allow creating hidden files but to prevent content from .git directory
-     * for example. See https://gitlab.gnome.org/GNOME/nautilus/issues/1413.
-     */
-    filtered = filter_templates (file_list, view->show_hidden_files);
-    nautilus_file_list_free (file_list);
+    file_list = nautilus_file_list_filter (file_list, filter_templates_callback, view);
+    file_list = nautilus_file_list_sort_by_display_name (file_list);
+
     templates_directory_uri = nautilus_get_templates_directory_uri ();
     menu = g_menu_new ();
 
-    filtered = nautilus_file_list_sort_by_display_name (filtered);
-
     num = 0;
     any_templates = FALSE;
-    for (node = filtered; num < TEMPLATE_LIMIT && node != NULL; node = node->next, num++)
+    for (GList *node = file_list; num < TEMPLATE_LIMIT && node != NULL; node = node->next, num++)
     {
         file = node->data;
         if (nautilus_file_is_directory (file))
@@ -5561,7 +5555,6 @@ update_directory_in_templates_menu (NautilusFilesView *view,
         }
     }
 
-    nautilus_file_list_free (filtered);
     g_free (templates_directory_uri);
 
     if (!any_templates)
@@ -5943,18 +5936,26 @@ typedef struct
 } ExtractData;
 
 static void
+clear_extract_data (ExtractData *data)
+{
+    g_hash_table_destroy (data->added_locations);
+    g_clear_weak_pointer (&data->view);
+    g_free (data);
+}
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (ExtractData, clear_extract_data)
+
+static void
 extract_done (GList    *outputs,
               gpointer  user_data)
 {
-    ExtractData *data;
+    g_autoptr (ExtractData) data = user_data;
     GList *l;
     gboolean all_files_acknowledged;
 
-    data = user_data;
-
     if (data->view == NULL)
     {
-        goto out;
+        return;
     }
 
     NautilusFilesView *self = data->view;
@@ -5965,7 +5966,7 @@ extract_done (GList    *outputs,
 
     if (outputs == NULL)
     {
-        goto out;
+        return;
     }
 
     all_files_acknowledged = TRUE;
@@ -6007,16 +6008,6 @@ extract_done (GList    *outputs,
             }
         }
     }
-out:
-    g_hash_table_destroy (data->added_locations);
-
-    if (data->view != NULL)
-    {
-        g_object_remove_weak_pointer (G_OBJECT (data->view),
-                                      (gpointer *) &data->view);
-    }
-
-    g_free (data);
 }
 
 static void
